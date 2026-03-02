@@ -118,6 +118,13 @@
     }
     .risk-rec { font-size: 1.95rem; color: #cbd5e1; text-align: center; margin-top: 0.75rem; max-width: 800px; }
 
+    .viewer-line {
+      margin-top: 0.4rem;
+      font-size: 0.9rem;
+      color: #a5b4fc;
+      text-align: center;
+    }
+
     /* Controls */
     .controls-card { padding: 1.25rem; margin-bottom: 1.5rem; position: relative; z-index: 10; }
     .control-label { font-size: 0.75rem; color: #94a3b8; margin-bottom: 0.5rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -252,6 +259,7 @@
         </div>
       </div>
       <p class="risk-rec" v-text="riskRec"></p>
+      <p v-if="viewerText" class="viewer-line" v-text="viewerText"></p>
     </main>
 
     <section class="controls-card glass">
@@ -345,7 +353,10 @@
         minutes: 'דקות',
         hours: 'שעות',
         and: 'ו-',
-        days: 'ימים'
+        days: 'ימים',
+        viewersYouAndOne: 'אתם ועוד מישהו אחד מתלבטים אם להירטב.',
+        viewersYouAndFew: 'אתם ועוד {n} אנשים על הגדר בין מגבת למים.',
+        viewersYouAndMany: '{n} אנשים נוספים מנסים לתפוס מקלחת בזמן הנכון.'
       },
       en: {
         title: 'Can I Shower?',
@@ -380,7 +391,10 @@
         minutes: 'minutes',
         hours: 'hours',
         and: 'and ',
-        days: 'days'
+        days: 'days',
+        viewersYouAndOne: 'It\'s you and one more person wondering if now is shower o\'clock.',
+        viewersYouAndFew: 'You and {n} others are hovering between towel and hot water.',
+        viewersYouAndMany: '{n} more people are trying to catch the perfect shower window.'
       }
     };
 
@@ -401,6 +415,8 @@
         initialLoading: true,
         isDebug: false,
         debugTimeInput: '',
+        viewerId: null,
+        viewersCount: 0,
         data: {
           risk: 0, minutesSinceLastAlert: null,
           salvoCount: 0, trend: 'stable', expectedNextAlert: null, noData: false
@@ -471,6 +487,16 @@
           if (tr === 'increasing') return this.t.trendUp;
           if (tr === 'decreasing') return this.t.trendDown;
           return this.t.trendStable;
+        },
+
+        get viewerText() {
+          var c = this.viewersCount || 0;
+          if (c <= 1) return '';
+          var others = c - 1;
+          var t = this.t;
+          if (others === 1) return t.viewersYouAndOne;
+          if (others <= 4) return t.viewersYouAndFew.replace('{n}', others);
+          return t.viewersYouAndMany.replace('{n}', others);
         },
 
         get filteredLocs() {
@@ -563,6 +589,36 @@
           this.load();
         },
 
+        ensureViewerId() {
+          if (this.viewerId) return;
+          try {
+            var saved = localStorage.getItem('viewerId');
+            if (saved && typeof saved === 'string') {
+              this.viewerId = saved;
+              return;
+            }
+          } catch(e) {}
+          var base = Math.random().toString(36).slice(2);
+          var extra = Date.now().toString(36);
+          this.viewerId = (base + extra).slice(0, 32);
+          try {
+            localStorage.setItem('viewerId', this.viewerId);
+          } catch(e) {}
+        },
+
+        pingViewers() {
+          var self = this;
+          if (!this.viewerId) return;
+          fetch('/api/analytics/ping?id=' + encodeURIComponent(this.viewerId))
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(d) {
+              if (d && typeof d.viewers === 'number') {
+                self.viewersCount = d.viewers;
+              }
+            })
+            .catch(function() {});
+        },
+
         buildUrl() {
           var u = '/api/predict?duration=' + this.duration;
           if (this.selectedLocations.length) u += '&location=' + encodeURIComponent(this.selectedLocations.join('|'));
@@ -617,9 +673,14 @@
             this.isDebug = false;
           }
 
+          this.ensureViewerId();
+
           this.loadLocations();
           this.load();
           this.timer = setInterval(function() { self.load(); }, 30000);
+           // Separate lightweight ping for "who's watching" analytics
+          setInterval(function() { self.pingViewers(); }, 25000);
+          this.pingViewers();
           document.addEventListener('click', function(e) {
             var wrap = document.querySelector('.loc-input-wrap');
             if (wrap && !wrap.contains(e.target)) self.showDropdown = false;

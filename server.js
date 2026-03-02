@@ -18,6 +18,18 @@ let parsedCache = null;
 let lastFetch = null;
 let allAlerts = [];
 
+// In-memory viewer analytics: simple "who's watching now" counter
+const VIEWER_TTL_MS = 60 * 1000;
+const viewers = new Map(); // id -> lastSeenMs
+
+function getActiveViewerCount(now = Date.now()) {
+    const cutoff = now - VIEWER_TTL_MS;
+    for (const [id, ts] of viewers) {
+        if (ts < cutoff) viewers.delete(id);
+    }
+    return viewers.size;
+}
+
 function loadModelParams() {
     try {
         const model = JSON.parse(fs.readFileSync(path.join(__dirname, 'model.json'), 'utf8'));
@@ -170,6 +182,16 @@ function formatResult(pred, salvos) {
 }
 
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/analytics/ping', (req, res) => {
+    const rawId = typeof req.query.id === 'string' ? req.query.id : '';
+    const id = rawId.slice(0, 64);
+    if (id) {
+        viewers.set(id, Date.now());
+    }
+    const count = getActiveViewerCount();
+    res.json({ viewers: count });
+});
 
 app.get('/api/predict', (req, res) => {
     const parsed = parsedCache || buildSalvos(allAlerts);
