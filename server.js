@@ -14,6 +14,42 @@ const FETCH_INTERVAL = 30 * 1000;
 const HISTORY_DAYS = 90;
 const HTTP_TIMEOUT_MS = 25000;
 
+// Optional geo index for "nearest location" lookup
+let locationCoords = null;
+function loadLocationCoords() {
+    if (locationCoords) return locationCoords;
+    try {
+        const raw = fs.readFileSync(path.join(__dirname, 'locations-latlong.json'), 'utf8');
+        const obj = JSON.parse(raw);
+        locationCoords = Object.entries(obj).map(([name, v]) => {
+            const lat = Number(v && v.lat);
+            const lng = Number(v && v.lng);
+            return Number.isFinite(lat) && Number.isFinite(lng) ? { name, lat, lng } : null;
+        }).filter(Boolean);
+    } catch (e) {
+        console.error('Failed to load locations-latlong.json:', e.message);
+        locationCoords = [];
+    }
+    return locationCoords;
+}
+
+function findNearestLocation(lat, lng) {
+    const locs = loadLocationCoords();
+    if (!locs.length) return null;
+    let best = null;
+    let bestDist2 = Infinity;
+    for (const loc of locs) {
+        const dLat = lat - loc.lat;
+        const dLng = lng - loc.lng;
+        const dist2 = dLat * dLat + dLng * dLng;
+        if (dist2 < bestDist2) {
+            bestDist2 = dist2;
+            best = loc;
+        }
+    }
+    return best;
+}
+
 let parsedCache = null;
 let lastFetch = null;
 let allAlerts = [];
@@ -415,6 +451,19 @@ app.get('/api/predict', (req, res) => {
 app.get('/api/locations', (req, res) => {
     const parsed = parsedCache || buildSalvos(allAlerts);
     res.json(parsed.locations);
+});
+
+app.get('/api/nearest-location', (req, res) => {
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return res.status(400).json({ error: 'invalid_coordinates' });
+    }
+    const nearest = findNearestLocation(lat, lng);
+    if (!nearest) {
+        return res.status(500).json({ error: 'location_index_unavailable' });
+    }
+    res.json({ name: nearest.name, lat: nearest.lat, lng: nearest.lng });
 });
 
 app.get('/api/status', (req, res) => {

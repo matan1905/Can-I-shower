@@ -865,6 +865,39 @@
           this.showDropdown = !!this.locQuery && this.filteredLocs.length > 0;
         },
 
+        autoDetectLocation() {
+          var self = this;
+          if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+          if (self.selectedLocations && self.selectedLocations.length) return;
+          try {
+            var disabled = localStorage.getItem('autoGeoDisabled');
+            if (disabled === '1') return;
+          } catch(e) {}
+          navigator.geolocation.getCurrentPosition(
+            function(pos) {
+              var coords = pos && pos.coords;
+              var lat = coords && typeof coords.latitude === 'number' ? coords.latitude : null;
+              var lng = coords && typeof coords.longitude === 'number' ? coords.longitude : null;
+              if (lat == null || lng == null) return;
+              fetch('/api/nearest-location?lat=' + encodeURIComponent(lat) + '&lng=' + encodeURIComponent(lng))
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(d) {
+                  if (!d || !d.name) return;
+                  if (self.selectedLocations.indexOf(d.name) === -1) {
+                    self.selectedLocations = [d.name];
+                    self.saveLocations();
+                    self.load();
+                  }
+                })
+                .catch(function() {});
+            },
+            function() {
+              try { localStorage.setItem('autoGeoDisabled', '1'); } catch(e) {}
+            },
+            { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
+          );
+        },
+
         pickLocation(loc) {
           if (this.selectedLocations.indexOf(loc) === -1) this.selectedLocations.push(loc);
           this.locQuery = '';
@@ -986,6 +1019,7 @@
           this.ensureViewerId();
 
           this.loadLocations();
+          this.autoDetectLocation();
           this.load();
           this.timer = setInterval(function() { self.load(); }, 30000);
            // Separate lightweight ping for "who's watching" analytics
