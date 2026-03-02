@@ -87,7 +87,7 @@ function computeClusterDurationModel(salvos) {
     // If no completed clusters, build synthetic model from current cluster span
     if (!durations.length) {
         const span = salvos[salvos.length - 1].timestamp - salvos[0].timestamp;
-        // Use current span as estimate — P(active) will decay after this duration
+        // Use current span as estimate â€” P(active) will decay after this duration
         const estDuration = Math.max(span, 4 * 3600); // at least 4 hours
         return {
             durations: [],
@@ -159,7 +159,7 @@ function logNormalCDF(x, mu, sigma) {
 function logNormalCondRisk(elapsed, shower, mu, sigma) {
     const survE = 1 - logNormalCDF(elapsed, mu, sigma);
     if (survE < 1e-12) {
-        // Past all observed data — decay based on overshoot
+        // Past all observed data â€” decay based on overshoot
         return Math.max(0, shower / (elapsed + shower) * 0.3);
     }
     const survEnd = 1 - logNormalCDF(elapsed + shower, mu, sigma);
@@ -168,7 +168,7 @@ function logNormalCondRisk(elapsed, shower, mu, sigma) {
 
 function logNormalExpResidual(elapsed, mu, sigma) {
     const survE = 1 - logNormalCDF(elapsed, mu, sigma);
-    if (survE < 1e-12) return elapsed; // already way past — just return elapsed as "unknown"
+    if (survE < 1e-12) return elapsed; // already way past â€” just return elapsed as "unknown"
     let integral = 0;
     const dt = 0.5;
     const maxT = Math.max(Math.exp(mu + 3 * sigma), elapsed + 500);
@@ -252,7 +252,7 @@ function mixtureCondRisk(elapsed, shower, gaps) {
         longRisk = elapsed < longGaps[0] ? shower / (longGaps[0] + shower) : 0.1;
     }
 
-    // Beyond all observed data — decay
+    // Beyond all observed data â€” decay
     const maxGap = Math.max(...gaps);
     if (elapsed > maxGap) {
         const overshoot = elapsed - maxGap;
@@ -581,7 +581,7 @@ function hasAlertInWindow(timestamps, start, end) {
 async function loadAlerts() {
     const from = new Date(Date.UTC(2026, 1, 1));
     const to = new Date(Date.UTC(2026, 2, 1));
-    console.log(`Fetching alerts ${isoDate(from)} → ${isoDate(to)}...`);
+    console.log(`Fetching alerts ${isoDate(from)} â†’ ${isoDate(to)}...`);
     const alerts = await fetchAlerts(isoDate(from), isoDate(to));
     console.log(`Fetched ${alerts.length} raw alerts\n`);
     return alerts;
@@ -651,7 +651,7 @@ function evaluateModel(name, predictions, actuals) {
 
     console.log(`\n  ${name}: Brier=${brier.toFixed(4)}, Skill=${brierSkill.toFixed(3)}, BaseRate=${pct(baseRate)}, N=${predictions.length}`);
     console.log(`  ${'Bin'.padEnd(8)} ${'Count'.padStart(6)} ${'Pred'.padStart(7)} ${'Actual'.padStart(7)} ${'Delta'.padStart(7)}`);
-    console.log(`  ${'─'.repeat(42)}`);
+    console.log(`  ${'â”€'.repeat(42)}`);
 
     for (let b = 0; b < numBins; b++) {
         const info = bins[b];
@@ -674,16 +674,16 @@ function evaluateModel(name, predictions, actuals) {
 // ==================== TESTS ====================
 
 function testDataOverview(salvos) {
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
     console.log('TEST 1: DATA OVERVIEW');
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
 
     const gaps = [];
     for (let i = 1; i < salvos.length; i++) gaps.push((salvos[i].timestamp - salvos[i - 1].timestamp) / 60);
     gaps.sort((a, b) => a - b);
 
     console.log(`Salvos: ${salvos.length}`);
-    console.log(`Span: ${new Date(salvos[0].timestamp * 1000).toISOString()} → ${new Date(salvos[salvos.length - 1].timestamp * 1000).toISOString()}`);
+    console.log(`Span: ${new Date(salvos[0].timestamp * 1000).toISOString()} â†’ ${new Date(salvos[salvos.length - 1].timestamp * 1000).toISOString()}`);
     console.log(`Duration: ${((salvos[salvos.length - 1].timestamp - salvos[0].timestamp) / 3600).toFixed(1)}h`);
     console.log(`\nGap stats (${gaps.length} gaps, minutes):`);
     const percentiles = [0, 10, 25, 50, 75, 90, 100];
@@ -702,9 +702,9 @@ function testDataOverview(salvos) {
 }
 
 function testRiskCurves(gaps) {
-    console.log('\n' + '═'.repeat(70));
+    console.log('\n' + 'â•'.repeat(70));
     console.log('TEST 2: RAW RISK vs ELAPSED (shower=15m, no cluster decay)');
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
 
     const shower = 15;
     const models = makeModels();
@@ -712,7 +712,7 @@ function testRiskCurves(gaps) {
 
     const header = 'Elapsed'.padEnd(8) + models.map(m => m.name.padStart(10)).join('') + '  Surv';
     console.log(header);
-    console.log('─'.repeat(header.length + 8));
+    console.log('â”€'.repeat(header.length + 8));
 
     for (const e of elapsedList) {
         const survCount = gaps.filter(g => g > e).length;
@@ -726,9 +726,9 @@ function testRiskCurves(gaps) {
 }
 
 function testCalibration(salvos, clusterDurationModel) {
-    console.log('\n' + '═'.repeat(70));
+    console.log('\n' + 'â•'.repeat(70));
     console.log('TEST 3: BACKTESTING CALIBRATION (all models)');
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
 
     const models = makeModels();
     const timestamps = salvos.map(s => s.timestamp);
@@ -749,7 +749,7 @@ function testCalibration(salvos, clusterDurationModel) {
     for (let t = salvos[salvos.length - 1].timestamp + 6 * 3600; t <= maxNow; t += 1800) evalPoints.add(t);
     const sortedEvalPoints = [...evalPoints].sort((a, b) => a - b);
 
-    console.log(`Eval points: ${sortedEvalPoints.length} (${new Date(minNow * 1000).toISOString()} → ${new Date(maxNow * 1000).toISOString()})`);
+    console.log(`Eval points: ${sortedEvalPoints.length} (${new Date(minNow * 1000).toISOString()} â†’ ${new Date(maxNow * 1000).toISOString()})`);
 
     for (const shower of showers) {
         console.log(`\n--- Shower: ${shower}m ---`);
@@ -775,9 +775,9 @@ function testCalibration(salvos, clusterDurationModel) {
 }
 
 function testRandomForest(salvos, clusterDurationModel) {
-    console.log('\n' + '═'.repeat(70));
+    console.log('\n' + 'â•'.repeat(70));
     console.log('TEST 4: RANDOM FOREST');
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
 
     const timestamps = salvos.map(s => s.timestamp);
     const showers = [10, 15, 20];
@@ -862,7 +862,7 @@ function testRandomForest(salvos, clusterDurationModel) {
 
     importances.sort((a, b) => b.importance - a.importance);
     for (const imp of importances) {
-        const bar = imp.importance > 0 ? '█'.repeat(Math.min(40, Math.round(imp.importance * 500))) : '';
+        const bar = imp.importance > 0 ? 'â–ˆ'.repeat(Math.min(40, Math.round(imp.importance * 500))) : '';
         console.log(`    ${imp.name.padEnd(16)} ${imp.importance.toFixed(4).padStart(7)} ${bar}`);
     }
 
@@ -870,9 +870,9 @@ function testRandomForest(salvos, clusterDurationModel) {
 }
 
 function testTrajectory(salvos, clusterDurationModel, rf) {
-    console.log('\n' + '═'.repeat(70));
+    console.log('\n' + 'â•'.repeat(70));
     console.log('TEST 5: RISK TRAJECTORY OVER TIME');
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
 
     const models = makeModels();
     const shower = 15;
@@ -891,7 +891,7 @@ function testTrajectory(salvos, clusterDurationModel, rf) {
         (rf ? '        RF'.padStart(10) : '') +
         '  P(act)  Actual';
     console.log(header);
-    console.log('─'.repeat(header.length));
+    console.log('â”€'.repeat(header.length));
 
     for (const e of elapsedMinutes) {
         const nowSec = anchorTs + e * 60;
@@ -922,7 +922,7 @@ function testTrajectory(salvos, clusterDurationModel, rf) {
             rfVal = rf.predict(features) * ap;
         }
 
-        const occStr = occurred ? ' ← YES' : ' ← no';
+        const occStr = occurred ? ' â† YES' : ' â† no';
         console.log(
             fmtDur(e).padEnd(8) +
             values.map(v => pct(v).padStart(10)).join('') +
@@ -934,9 +934,9 @@ function testTrajectory(salvos, clusterDurationModel, rf) {
 }
 
 function testQuietPeriod(salvos, clusterDurationModel, rf) {
-    console.log('\n' + '═'.repeat(70));
+    console.log('\n' + 'â•'.repeat(70));
     console.log('TEST 6: QUIET PERIOD DECAY');
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
 
     const models = makeModels();
     const shower = 15;
@@ -950,7 +950,7 @@ function testQuietPeriod(salvos, clusterDurationModel, rf) {
         (rf ? '        RF' : '') +
         '  P(active)';
     console.log(header);
-    console.log('─'.repeat(header.length));
+    console.log('â”€'.repeat(header.length));
 
     for (const h of hoursAfter) {
         const nowSec = lastSalvoTs + h * 3600;
@@ -988,9 +988,9 @@ function testQuietPeriod(salvos, clusterDurationModel, rf) {
 }
 
 function testLOOCV(salvos) {
-    console.log('\n' + '═'.repeat(70));
+    console.log('\n' + 'â•'.repeat(70));
     console.log('TEST 7: LEAVE-ONE-OUT CROSS-VALIDATION');
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
 
     const allGaps = [];
     for (let i = 1; i < salvos.length; i++) {
@@ -1023,9 +1023,9 @@ function testLOOCV(salvos) {
 }
 
 function testElapsedStratified(salvos, clusterDurationModel, rf) {
-    console.log('\n' + '═'.repeat(70));
+    console.log('\n' + 'â•'.repeat(70));
     console.log('TEST 8: CALIBRATION STRATIFIED BY ELAPSED TIME');
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
 
     const timestamps = salvos.map(s => s.timestamp);
     const models = makeModels();
@@ -1133,9 +1133,9 @@ async function main() {
     testLOOCV(salvos);
     testElapsedStratified(salvos, clusterDurationModel, rf);
 
-    console.log('\n' + '═'.repeat(70));
+    console.log('\n' + 'â•'.repeat(70));
     console.log('ALL TESTS COMPLETE');
-    console.log('═'.repeat(70));
+    console.log('â•'.repeat(70));
 }
 
 main().catch(e => { console.error('Failed:', e); process.exit(1); });

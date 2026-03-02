@@ -1,9 +1,6 @@
-// shared.js
 const SALVO_WINDOW_SEC = 120;
 const DAY_SEC = 86400;
-const CLUSTER_GAP_SEC = 7 * DAY_SEC;
 
-// ==================== Salvo building ====================
 function buildSalvos(alerts) {
     if (!alerts.length) return { salvos: [], locations: [] };
     const sorted = [...alerts].sort((a, b) => a.timestamp - b.timestamp);
@@ -21,55 +18,127 @@ function buildSalvos(alerts) {
     salvos.push(cur);
     const locations = new Set();
     for (const a of sorted) locations.add(a.location);
-    return {
-        salvos,
-        locations: Array.from(locations).sort()
-    };
+    return { salvos, locations: Array.from(locations).sort() };
 }
 
-// ==================== Active cluster ====================
-function getActiveCluster(salvos, nowSec) {
-    if (!salvos.length) return { salvos: [], clusterStartTs: null };
-    const past = salvos.filter(s => s.timestamp <= nowSec);
-    if (!past.length) return { salvos: [], clusterStartTs: null };
-    let clusterStart = 0;
-    for (let i = past.length - 1; i > 0; i--) {
-        if (past[i].timestamp - past[i - 1].timestamp > CLUSTER_GAP_SEC) {
-            clusterStart = i;
-            break;
-        }
+// ==================== Two-state hunger model ====================
+//
+// Two state variables:
+//   hunger âˆˆ [0, 1]    - tension / need for next attack. Grows over time.
+//   satiation âˆˆ [0, âˆž) - post-salvo fullness. Spikes on salvo, decays to 0.
+//
+// Between events (dt minutes):
+//   satiation *= exp(-satiation_decay * dt)          -- fullness fades
+//   effective_growth = growth_rate * (1 - hunger)     -- logistic toward 1
+//   suppression = 1 / (1 + satiation)                 -- satiation suppresses growth
+//   hunger += effective_growth * suppression * dt
+//
+// On salvo:
+//   satiation += satiation_boost                      -- just ate â†’ fullness spikes
+//   hunger *= (1 - drop_per_salvo)                    -- immediate partial drop
+//
+// Behavior:
+//   Right after salvo: satiation is high â†’ growth suppressed â†’ hunger stays low
+//   Minutes later: satiation decays â†’ growth resumes
+//   Hours/days later: satiation â‰ˆ 0 â†’ hunger grows freely toward 1
+
+const DEFAULT_PARAMS = {
+    growth_rate: 0.003,
+    drop_per_salvo: 0.3,
+    satiation_boost: 2.0,
+    satiation_decay: 0.05,
+    base_duration: 15,
+    barrage_halflife: 10,
+};
+
+const SIM_STEP_MIN = 10;
+
+function advanceState(hunger, satiation, dtMinutes, growth_rate, satiation_decay) {
+    const steps = Math.max(1, Math.ceil(dtMinutes / SIM_STEP_MIN));
+    const stepDt = dtMinutes / steps;
+    for (let i = 0; i < steps; i++) {
+        satiation *= Math.exp(-satiation_decay * stepDt);
+        const suppression = 1 / (1 + satiation);
+        hunger += growth_rate * (1 - hunger) * suppression * stepDt;
     }
-    return { salvos: past.slice(clusterStart), clusterStartTs: past[clusterStart].timestamp };
+    return { hunger: Math.min(1, hunger), satiation };
 }
 
-// ==================== Rate estimation ====================
-//
-// THE KEY INSIGHT:
-//
-// There are TWO different rates that matter:
-//
-// 1. CONFLICT RATE: How many salvos per hour is this conflict producing?
-//    This is measured over DAYS, not minutes. It doesn't change just because
-//    there's been a 6-hour lull. The war is still happening.
-//    This answers: "Over my shower window, what's the chance of at least one alert?"
-//
-// 2. BURST RATE: Am I in the middle of a barrage RIGHT NOW?
-//    This is measured over minutes. If the last alert was 30 seconds ago,
-//    the next one is probably seconds away.
-//    This answers: "Should I wait 5 more minutes before leaving the shelter?"
-//
-// The user's risk = max(conflict-based risk, burst-based risk)
-//
-// Burst risk is HIGH right after an alert, drops to baseline within ~30 min
-// Conflict risk is the FLOOR — it's always there during active conflict
-//
-// This gives the bathtub:
-//   elapsed=0:    burst HIGH + conflict HIGH  = very high
-//   elapsed=30m:  burst fading + conflict HIGH = moderate-high
-//   elapsed=6h:   burst gone + conflict HIGH   = still meaningful
-//   elapsed=24h+: burst gone + conflict maybe  = depends on whether conflict continues
+function simulateHungerState(salvos, nowSec, params) {
+    const { growth_rate, drop_per_salvo, satiation_boost, satiation_decay } = params;
+    let hunger = 0;
+    let satiation = 0;
+    let prevSec = salvos.length > 0 ? salvos[0].timestamp : nowSec;
 
-function computeRisk(salvos, windowMin, nowSec) {
+    for (const salvo of salvos) {
+        if (salvo.timestamp > nowSec) break;
+        const dt = (salvo.timestamp - prevSec) / 60;
+        if (dt > 0) {
+            const state = advanceState(hunger, satiation, dt, growth_rate, satiation_decay);
+            hunger = state.hunger;
+            satiation = state.satiation;
+        }
+        satiation += satiation_boost;
+        hunger *= (1 - drop_per_salvo);
+        prevSec = salvo.timestamp;
+    }
+
+    const dtNow = (nowSec - prevSec) / 60;
+    if (dtNow > 0) {
+        const state = advanceState(hunger, satiation, dtNow, growth_rate, satiation_decay);
+        hunger = state.hunger;
+        satiation = state.satiation;
+    }
+
+    return { hunger: Math.max(0, Math.min(1, hunger)), satiation };
+}
+
+function simulateHunger(salvos, nowSec, params) {
+    return simulateHungerState(salvos, nowSec, params).hunger;
+}
+
+function estimateExpectedWait(salvos, nowSec, windowMin, params) {
+    const RISK_THRESHOLD = 0.5;
+    const MAX_HORIZON_MIN = 48 * 60;
+    const STEP_MIN = 5;
+
+    const { hunger, satiation } = simulateHungerState(salvos, nowSec, params);
+    if (hungerToRisk(hunger, windowMin, params) >= RISK_THRESHOLD) return 0;
+
+    let h = hunger;
+    let s = satiation;
+    let elapsed = 0;
+    while (elapsed < MAX_HORIZON_MIN) {
+        const state = advanceState(h, s, STEP_MIN, params.growth_rate, params.satiation_decay);
+        h = state.hunger;
+        s = state.satiation;
+        elapsed += STEP_MIN;
+        if (hungerToRisk(h, windowMin, params) >= RISK_THRESHOLD) return elapsed;
+    }
+    return null;
+}
+
+function hungerToRisk(hunger, durationMin, params) {
+    const base = Math.max(1, params.base_duration);
+    return Math.max(0, Math.min(0.99, 1 - Math.pow(1 - hunger, durationMin / base)));
+}
+
+// ==================== Main prediction ====================
+
+function computeBarrageRisk(gaps, elapsed, durationMin) {
+    if (gaps.length < 2) return 0;
+    const recentGaps = gaps.slice(-20);
+    const medianGap = [...recentGaps].sort((a, b) => a - b)[Math.floor(recentGaps.length / 2)];
+    const rate = 1 / Math.max(1, medianGap);
+    const surviving = recentGaps.filter(g => g > elapsed);
+    if (surviving.length === 0) return Math.max(0, durationMin / (elapsed + durationMin) * 0.3);
+    const failing = surviving.filter(g => g <= elapsed + durationMin);
+    return failing.length / surviving.length;
+}
+
+function computeRisk(salvos, windowMin, nowSec, params) {
+    const p = params || DEFAULT_PARAMS;
+
     if (salvos.length < 2) {
         const last = salvos.length === 1 ? salvos[0] : null;
         return {
@@ -80,118 +149,28 @@ function computeRisk(salvos, windowMin, nowSec) {
             lastAlertLocations: last ? Array.from(last.locations) : [],
             salvoCount: salvos.length,
             gapStats: null,
-            rateInfo: null
+            hungerInfo: null,
         };
     }
 
-    // Build gaps
-    const gaps = [];
-    for (let i = 1; i < salvos.length; i++) {
-        const g = (salvos[i].timestamp - salvos[i - 1].timestamp) / 60;
-        if (g > 0) gaps.push(g);
-    }
-
     const lastTs = salvos[salvos.length - 1].timestamp;
-    const elapsed = (nowSec - lastTs) / 60; // minutes since last alert
+    const elapsed = (nowSec - lastTs) / 60;
+    const hunger = simulateHunger(salvos, nowSec, p);
+    const tensionRisk = hungerToRisk(hunger, windowMin, p);
 
-    // ============ CONFLICT RATE ============
-    // Overall rate of this conflict, measured over longer windows
-    // This is the BASELINE — it doesn't drop just because of a current lull
+    const gaps = extractGaps(salvos);
+    const barrageRisk = computeBarrageRisk(gaps, elapsed, windowMin);
 
-    // Use multiple windows, take the highest rate that has enough data
-    // This captures: "yesterday had 30 salvos" even if today has been quiet so far
-    const conflictWindows = [
-        { hours: 4,  minSalvos: 2 },
-        { hours: 12, minSalvos: 3 },
-        { hours: 24, minSalvos: 3 },
-        { hours: 72, minSalvos: 5 },
-    ];
+    const halflife = Math.max(1, p.barrage_halflife || 10);
+    const barrageWeight = Math.exp(-0.693 * elapsed / halflife);
+    const risk = Math.max(0, Math.min(0.99, barrageWeight * barrageRisk + (1 - barrageWeight) * tensionRisk));
 
-    let conflictRate = 0; // salvos per minute
-    let bestConflictWindow = null;
-
-    for (const cw of conflictWindows) {
-        const cutoff = nowSec - cw.hours * 3600;
-        let count = 0;
-        for (const s of salvos) {
-            if (s.timestamp > cutoff && s.timestamp <= nowSec) count++;
-        }
-        if (count >= cw.minSalvos) {
-            const rate = count / (cw.hours * 60); // salvos per minute
-            if (rate > conflictRate) {
-                conflictRate = rate;
-                bestConflictWindow = { hours: cw.hours, count, rate };
-            }
-        }
-    }
-
-    // Fallback: use entire cluster
-    if (conflictRate === 0 && salvos.length >= 2) {
-        const clusterSpanMin = (nowSec - salvos[0].timestamp) / 60;
-        if (clusterSpanMin > 0) {
-            conflictRate = salvos.length / clusterSpanMin;
-            bestConflictWindow = { hours: clusterSpanMin / 60, count: salvos.length, rate: conflictRate };
-        }
-    }
-
-    // Conflict-based probability: P = 1 - e^(-rate * window)
-    const conflictLambda = conflictRate * windowMin;
-    const conflictProb = 1 - Math.exp(-conflictLambda);
-
-    // ============ BURST RATE ============
-    // Are we in the middle of rapid fire? Look at very recent activity.
-    // This captures the "alert 30 seconds ago → next one imminent" pattern
-
-    const BURST_WINDOW_MIN = 30; // look at last 30 minutes
-    const burstCutoff = nowSec - BURST_WINDOW_MIN * 60;
-    let burstCount = 0;
-    for (const s of salvos) {
-        if (s.timestamp > burstCutoff && s.timestamp <= nowSec) burstCount++;
-    }
-
-    const burstRate = burstCount / BURST_WINDOW_MIN; // salvos per minute in recent window
-
-    // Burst fades with elapsed time since last alert
-    // If last alert was just now → full burst rate
-    // If last alert was 30 min ago → burst has faded to baseline
-    // Decay: exponential with half-life based on recent gap pattern
-
-    const recentGaps = gaps.slice(-10);
-    const medianGap = recentGaps.length > 0
-        ? [...recentGaps].sort((a, b) => a - b)[Math.floor(recentGaps.length / 2)]
-        : 10;
-
-    // Half-life = median gap (if gaps are 3 min apart, burst fades in ~3 min)
-    const halfLife = Math.max(2, medianGap);
-    const burstDecay = Math.exp(-elapsed * Math.LN2 / halfLife);
-    const adjustedBurstRate = burstRate * burstDecay;
-
-    // Burst probability
-    const burstLambda = adjustedBurstRate * windowMin;
-    const burstProb = 1 - Math.exp(-burstLambda);
-
-    // ============ COMBINED RISK ============
-    // The risk is: what's the chance of at least one alert?
-    // P(at least one) = 1 - P(none from conflict) * P(none from burst)
-    // But since burst is a SUBSET of conflict activity, we use max instead
-    // to avoid double-counting
-
-    // Actually the right way: the effective rate is max(conflict, burst)
-    // at each moment, but integrated over the window.
-    // Simpler and correct enough: take the higher probability
-    const risk = Math.max(conflictProb, burstProb);
-
-    // ============ EXPECTED WAIT ============
-    // Use the higher rate for expected wait
-    const effectiveRate = Math.max(conflictRate, adjustedBurstRate);
-    const expectedWait = effectiveRate > 0.0001 ? 1 / effectiveRate : null;
-
-    // Gap stats
     const sorted = [...gaps].sort((a, b) => a - b);
     const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    const expectedWait = estimateExpectedWait(salvos, nowSec, windowMin, p);
 
     return {
-        risk: Math.max(0, Math.min(0.99, risk)),
+        risk,
         expectedWait,
         minutesSinceLastAlert: elapsed,
         lastAlertTime: lastTs,
@@ -202,23 +181,23 @@ function computeRisk(salvos, windowMin, nowSec) {
             median: sorted[Math.floor(sorted.length / 2)],
             min: sorted[0],
             max: sorted[sorted.length - 1],
-            count: gaps.length
+            count: gaps.length,
         },
-        rateInfo: {
-            conflictRate,
-            conflictProb,
-            conflictWindow: bestConflictWindow,
-            burstRate,
-            burstDecay,
-            adjustedBurstRate,
-            burstProb,
-            effectiveRate,
-            elapsed
-        }
+        hungerInfo: { hunger, barrageRisk, barrageWeight, tensionRisk, elapsed, params: p },
     };
 }
 
 // ==================== Helpers ====================
+
+function extractGaps(salvos) {
+    const gaps = [];
+    for (let i = 1; i < salvos.length; i++) {
+        const g = (salvos[i].timestamp - salvos[i - 1].timestamp) / 60;
+        if (g > 0) gaps.push(g);
+    }
+    return gaps;
+}
+
 function bsearch(arr, target) {
     let lo = 0, hi = arr.length;
     while (lo < hi) { const m = (lo + hi) >> 1; if (arr[m] <= target) lo = m + 1; else hi = m; }
@@ -230,10 +209,24 @@ function hasAlertInWindow(timestamps, start, end) {
     return i < timestamps.length && timestamps[i] <= end;
 }
 
+function parseIsraelTimestamp(dateStr) {
+    const normalized = dateStr.replace(' ', 'T');
+    const utcPlus2 = new Date(normalized + '+02:00');
+    const utcPlus3 = new Date(normalized + '+03:00');
+    const fmt = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false });
+    let localHour2 = parseInt(fmt.format(utcPlus2), 10);
+    if (localHour2 === 24) localHour2 = 0;
+    const parsedHour = parseInt(dateStr.split(/[\sT]/)[1].split(':')[0], 10);
+    if (localHour2 === parsedHour) return Math.floor(utcPlus2.getTime() / 1000);
+    return Math.floor(utcPlus3.getTime() / 1000);
+}
+
 module.exports = {
-    SALVO_WINDOW_SEC, DAY_SEC, CLUSTER_GAP_SEC,
+    SALVO_WINDOW_SEC, DAY_SEC,
     buildSalvos,
-    getActiveCluster,
-    computeRisk,
-    bsearch, hasAlertInWindow
+    computeRisk, extractGaps,
+    simulateHunger, simulateHungerState, advanceState, hungerToRisk, estimateExpectedWait,
+    DEFAULT_PARAMS,
+    bsearch, hasAlertInWindow,
+    parseIsraelTimestamp,
 };

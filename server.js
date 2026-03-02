@@ -4,7 +4,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const {
-    buildSalvos, getActiveCluster, computeRisk
+    buildSalvos, computeRisk, extractGaps, parseIsraelTimestamp, DEFAULT_PARAMS
 } = require('./shared');
 
 const app = express();
@@ -17,6 +17,17 @@ const HTTP_TIMEOUT_MS = 25000;
 let parsedCache = null;
 let lastFetch = null;
 let allAlerts = [];
+
+function loadModelParams() {
+    try {
+        const model = JSON.parse(fs.readFileSync(path.join(__dirname, 'model.json'), 'utf8'));
+        return model.params || DEFAULT_PARAMS;
+    } catch (_) {
+        return DEFAULT_PARAMS;
+    }
+}
+
+let trainedParams = loadModelParams();
 
 function isoDate(d) { return d.toISOString().slice(0, 10); }
 
@@ -38,7 +49,7 @@ function fetchAlerts(from, to) {
                             if (a.alertTypeId !== 1 && a.alertTypeId !== 2) continue;
                             alerts.push({
                                 location: a.name,
-                                timestamp: Math.floor(new Date(a.timeStamp + '+03:00').getTime() / 1000),
+                                timestamp: parseIsraelTimestamp(a.timeStamp),
                                 type: a.alertTypeId
                             });
                         }
@@ -72,7 +83,7 @@ function fetchRealtimeCached() {
                             if (a.alertTypeId !== 1 && a.alertTypeId !== 2) continue;
                             alerts.push({
                                 location: a.name,
-                                timestamp: Math.floor(new Date(a.timeStamp + '+03:00').getTime() / 1000),
+                                timestamp: parseIsraelTimestamp(a.timeStamp),
                                 type: a.alertTypeId
                             });
                         }
@@ -128,24 +139,21 @@ function parseDebugNow(val) {
     if (val == null || val === '') return null;
     const n = Number(val);
     if (!Number.isNaN(n)) return Math.floor(n < 1e12 ? n : n / 1000);
-    const d = new Date(val);
-    return Number.isNaN(d.getTime()) ? null : Math.floor(d.getTime() / 1000);
+    const normalized = val.includes(':') && val.split(':').length === 2 ? val + ':00' : val;
+    return parseIsraelTimestamp(normalized.replace('T', ' '));
 }
 
-function emptyResponse(isActive = false) {
+function emptyResponse() {
     return {
         risk: 0, level: 'GREEN', minutesSinceLastAlert: null,
         lastAlertTime: null, lastAlertLocations: [], salvoCount: 0,
         gapStats: null, trend: 'stable',
-        expectedNextAlert: null, isActive
+        expectedNextAlert: null
     };
 }
 
-function formatResult(pred, allActive, now) {
-    const gaps = [];
-    for (let i = 1; i < allActive.length; i++) {
-        gaps.push((allActive[i].timestamp - allActive[i - 1].timestamp) / 60);
-    }
+function formatResult(pred, salvos) {
+    const gaps = extractGaps(salvos);
     return {
         risk: pred.risk,
         level: getLevel(pred.risk),
@@ -156,9 +164,8 @@ function formatResult(pred, allActive, now) {
         gapStats: pred.gapStats,
         trend: computeTrend(gaps.slice(-20)),
         expectedNextAlert: pred.expectedWait,
-        isActive: pred.lastAlertTime ? (now - pred.lastAlertTime) < 86400 : false,
-        modelType: 'poisson_rate',
-        rateInfo: pred.rateInfo
+        modelType: 'hunger',
+        hungerInfo: pred.hungerInfo
     };
 }
 
@@ -166,7 +173,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/predict', (req, res) => {
     const parsed = parsedCache || buildSalvos(allAlerts);
-    if (parsed.salvos.length === 0) return res.json(emptyResponse());
+    const allSalvos = parsed.salvos;
+    if (allSalvos.length === 0) return res.json(emptyResponse());
 
     const locationParam = req.query.location;
     const locations = locationParam ? locationParam.split('|').map(l => l.trim()).filter(Boolean) : [];
@@ -174,46 +182,30 @@ app.get('/api/predict', (req, res) => {
     const debugNow = parseDebugNow(req.query.debugNow);
     const now = debugNow != null ? debugNow : Math.floor(Date.now() / 1000);
 
-    const activeInfo = getActiveCluster(parsed.salvos, now);
-    const allActive = activeInfo.salvos;
+    const pastSalvos = allSalvos.filter(s => s.timestamp <= now);
+    if (pastSalvos.length === 0) return res.json(emptyResponse());
 
     if (locations.length === 0) {
-        if (allActive.length === 0) return res.json(emptyResponse());
-        const pred = computeRisk(allActive, duration, now);
-        return res.json(formatResult(pred, allActive, now));
+        const pred = computeRisk(pastSalvos, duration, now, trainedParams);
+        return res.json(formatResult(pred, pastSalvos));
     }
 
     let worstRisk = -1;
     let worstResult = null;
 
     for (const loc of locations) {
-        const filtered = allActive.filter(s => s.locations && s.locations.has(loc));
+        const filtered = pastSalvos.filter(s => s.locations && s.locations.has(loc));
         if (filtered.length < 2) continue;
-        const pred = computeRisk(filtered, duration, now);
+        const pred = computeRisk(filtered, duration, now, trainedParams);
         if (pred.risk > worstRisk) {
             worstRisk = pred.risk;
-            worstResult = formatResult(pred, filtered, now);
+            worstResult = formatResult(pred, filtered);
         }
     }
     if (worstResult) return res.json(worstResult);
 
-    const locationSet = new Set(locations);
-    const matchingSalvos = allActive.filter(s => s.locations && [...s.locations].some(l => locationSet.has(l)));
-    const lastMatch = matchingSalvos.length > 0 ? matchingSalvos[matchingSalvos.length - 1] : null;
-    if (lastMatch) {
-        return res.json({
-            risk: 0.5, level: 'YELLOW',
-            minutesSinceLastAlert: (now - lastMatch.timestamp) / 60,
-            lastAlertTime: lastMatch.timestamp,
-            lastAlertLocations: Array.from(lastMatch.locations || []),
-            salvoCount: 1,
-            gapStats: null, trend: 'stable',
-            expectedNextAlert: null,
-            isActive: (now - lastMatch.timestamp) < 86400,
-            noData: true
-        });
-    }
-    res.json({ ...emptyResponse(), noData: true });
+    const pred = computeRisk(pastSalvos, duration, now, trainedParams);
+    return res.json(formatResult(pred, pastSalvos));
 });
 
 app.get('/api/locations', (req, res) => {
@@ -231,7 +223,8 @@ app.get('/api/status', (req, res) => {
         alertCount: allAlerts.length,
         salvoCount: parsed.salvos.length,
         latestAlert,
-        modelType: 'poisson_rate'
+        modelType: 'hunger',
+        trainedParams
     });
 });
 
@@ -264,7 +257,7 @@ async function fetchRecent() {
 app.listen(PORT, () => {
     console.log(`Server starting on port ${PORT}...`);
     fetchHistorical().then(() => {
-        console.log('Ready — Poisson rate model');
+        console.log('Ready â€” hunger model');
         setInterval(() => fetchRecent().catch(() => {}), FETCH_INTERVAL);
     }).catch(e => {
         console.error('Boot failed:', e.message);

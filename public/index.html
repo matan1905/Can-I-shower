@@ -97,12 +97,6 @@
     .status-dot.ok { background: #22c55e; animation: pulse-dot 2s ease-in-out infinite; }
     @keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
 
-    /* Inactive banner */
-    .inactive-banner {
-      padding: 0.65rem 1rem; text-align: center; font-size: 0.8rem;
-      color: #94a3b8; margin-bottom: 1.5rem;
-    }
-
     /* Risk gauge */
     .risk-section { display: flex; flex-direction: column; align-items: center; margin-bottom: 2rem; }
     .risk-gauge { position: relative; width: 260px; height: 150px; }
@@ -235,8 +229,6 @@
       </div>
     </header>
 
-    <div v-if="!data.isActive" class="glass inactive-banner" v-text="t.inactive"></div>
-
     <main class="risk-section">
       <div class="risk-gauge" dir="ltr">
         <svg viewBox="0 0 200 115">
@@ -293,7 +285,7 @@
       </div>
       <div class="glass info-card">
         <div class="info-card-title" v-text="t.expectedAlert"></div>
-        <div class="info-card-value" v-text="fmtMin(data.expectedNextAlert)"></div>
+        <div class="info-card-value" v-text="fmtHighRisk(data.expectedNextAlert)"></div>
       </div>
       <div class="glass info-card">
         <div class="info-card-title" v-text="t.alertCount"></div>
@@ -325,14 +317,13 @@
         subtitle: 'הערכת סיכון בזמן אמת',
         connected: 'מחובר',
         disconnected: 'לא מחובר',
-        inactive: 'אין עימות פעיל כרגע. הנתונים מבוססים על תקופת העימות האחרונה.',
         duration: 'משך המקלחת',
         min: 'דק׳',
         custom: 'אחר',
         locations: 'יישובים',
         locPlaceholder: 'חפשו יישוב...',
         timeSince: 'זמן מהאזעקה האחרונה',
-        expectedAlert: 'אזעקה צפויה בעוד',
+        expectedAlert: 'סיכון גבוה בעוד',
         alertCount: 'מספר אזעקות',
         trend: 'מגמה',
         trendUp: 'עולה',
@@ -349,6 +340,7 @@
         lastUpdate: 'עודכן לאחרונה',
         loading: 'טוען...',
         noData: 'אין מספיק נתונים להערכת סיכון',
+        now: 'עכשיו',
         lessThanMin: 'פחות מדקה',
         minutes: 'דקות',
         hours: 'שעות',
@@ -360,14 +352,13 @@
         subtitle: 'Real-time risk assessment',
         connected: 'Connected',
         disconnected: 'Disconnected',
-        inactive: 'No active conflict right now. Data is based on the last conflict period.',
         duration: 'Shower duration',
         min: 'min',
         custom: 'Other',
         locations: 'Locations',
         locPlaceholder: 'Search location...',
         timeSince: 'Time since last alert',
-        expectedAlert: 'Expected alert in',
+        expectedAlert: 'High risk in',
         alertCount: 'Alert count',
         trend: 'Trend',
         trendUp: 'Increasing',
@@ -384,6 +375,7 @@
         lastUpdate: 'Last updated',
         loading: 'Loading...',
         noData: 'Insufficient data for risk estimate',
+        now: 'Now',
         lessThanMin: 'Less than a minute',
         minutes: 'minutes',
         hours: 'hours',
@@ -409,7 +401,7 @@
         isDebug: false,
         debugTimeInput: '',
         data: {
-          risk: 0, isActive: true, minutesSinceLastAlert: null,
+          risk: 0, minutesSinceLastAlert: null,
           salvoCount: 0, trend: 'stable', expectedNextAlert: null, noData: false
         },
         timer: null,
@@ -498,6 +490,12 @@
           var h = Math.floor(m / 60), rm = Math.round(m % 60);
           if (h < 24) return h + ' ' + t.hours + (rm > 0 ? ' ' + t.and + rm + ' ' + t.min : '');
           return Math.floor(h / 24) + ' ' + t.days;
+        },
+
+        fmtHighRisk(m) {
+          if (m == null) return '–';
+          if (m < 1) return this.t.now;
+          return this.fmtMin(m);
         },
 
         setLang(l) {
