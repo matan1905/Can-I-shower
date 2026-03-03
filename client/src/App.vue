@@ -1,6 +1,6 @@
 <script>
 import { useTranslations } from '@/composables/useTranslations.js';
-import { fetchPredict, fetchLocations, fetchNearestLocation, fetchDailyRisk, pingViewers, fetchWeights, submitWeights } from '@/composables/useApi.js';
+import { fetchPredict, fetchLocations, fetchNearestLocation, fetchDailyRisk, pingViewers, fetchWeights } from '@/composables/useApi.js';
 import AppHeader from '@/components/AppHeader.vue';
 import AppFooter from '@/components/AppFooter.vue';
 import DebugPanel from '@/components/DebugPanel.vue';
@@ -33,7 +33,6 @@ export default {
             dailySalvos: [],
             isDailyLoading: false,
             userWeights: {},
-            weightsSubmitTimer: null,
             data: {
                 risk: 0, minutesSinceLastAlert: null,
                 salvoCount: 0, trend: 'stable',
@@ -47,9 +46,16 @@ export default {
         hasData() {
             return !this.isInitialLoading && !this.data.noData && this.data.minutesSinceLastAlert != null;
         },
+        weightedRisk() {
+            const w = this.userWeights;
+            const reasonings = this.data.reasonings;
+            if (!reasonings?.length || !w || !Object.keys(w).length) return this.data.risk;
+            const totalW = reasonings.reduce((s, r) => s + (w[r.id] ?? 0), 0) || 1;
+            return Math.max(0, Math.min(0.99, reasonings.reduce((s, r) => s + ((w[r.id] ?? 0) / totalW) * r.risk, 0)));
+        },
         riskRec() {
             if (!this.hasData) return '';
-            const r = this.data.risk;
+            const r = this.weightedRisk;
             if (r >= 0.5) return this.t.recHigh;
             if (r >= 0.25) return this.t.recMed;
             return this.t.recLow;
@@ -80,7 +86,6 @@ export default {
     },
     beforeUnmount() {
         clearInterval(this.pollTimer);
-        clearTimeout(this.weightsSubmitTimer);
     },
     watch: {
         duration() { this.load(); this.loadDailyRisk(); },
@@ -89,7 +94,7 @@ export default {
             this.load();
             this.loadDailyRisk();
         },
-        debugNow() { this.load(); },
+        debugNow() { this.load(); this.loadDailyRisk(); },
         lang() { this.updateTitle(); },
     },
     methods: {
@@ -149,10 +154,6 @@ export default {
         onWeightsChange(weights) {
             this.userWeights = weights;
             try { localStorage.setItem('userWeights', JSON.stringify(weights)); } catch (_) {}
-            clearTimeout(this.weightsSubmitTimer);
-            this.weightsSubmitTimer = setTimeout(() => {
-                submitWeights({ weights, viewerId: this.viewerId }).catch(() => {});
-            }, 2000);
         },
         async loadDailyRisk() {
             this.isDailyLoading = true;
@@ -160,6 +161,7 @@ export default {
                 const result = await fetchDailyRisk({
                     duration: this.duration,
                     locations: this.selectedLocations,
+                    debugNow: this.debugNow,
                 });
                 this.dailyPoints = result.points || [];
                 this.dailySalvos = result.salvos || [];
@@ -209,7 +211,7 @@ export default {
             <DebugPanel v-if="isDebug" v-model="debugNow" />
             <AppHeader :connected="isConnected" />
             <RiskGauge
-                :risk="data.risk"
+                :risk="weightedRisk"
                 :is-loading="isInitialLoading"
                 :has-data="hasData"
                 :viewer-text="viewerText"
@@ -227,7 +229,7 @@ export default {
                 :salvo-count="data.salvoCount"
                 :trend="data.trend"
             />
-            <DailyGraph :points="dailyPoints" :salvos="dailySalvos" :weights="userWeights" :is-loading="isDailyLoading" />
+            <DailyGraph :points="dailyPoints" :salvos="dailySalvos" :weights="userWeights" :is-loading="isDailyLoading" :debug-now="debugNow" />
             <ReasoningsChart v-if="hasData" :reasonings="data.reasonings" :weights="userWeights" @update:weights="onWeightsChange" />
             <AppFooter :last-update-time="lastUpdateTime" />
         </div>

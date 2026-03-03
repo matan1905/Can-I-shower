@@ -1,87 +1,48 @@
-const https = require('https');
 const { buildSalvos, parseIsraelTimestamp } = require('../../shared');
 const { API_BASE, REALTIME_URL, HTTP_TIMEOUT_MS } = require('../config');
 
 function isoDate(d) { return d.toISOString().slice(0, 10); }
 
-function fetchAlerts(from, to) {
-    const url = new URL(`${API_BASE}?from=${from}&to=${to}`);
-    return new Promise((resolve, reject) => {
-        const req = https.request(
-            { hostname: url.hostname, path: url.pathname + url.search, method: 'GET' },
-            (res) => {
-                let data = '';
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        if (!json.success) return reject(new Error(json.error || 'API error'));
-                        const alerts = [];
-                        for (const day of json.payload) {
-                            for (const a of day.alerts) {
-                                if (a.alertTypeId !== 1 && a.alertTypeId !== 2) continue;
-                                alerts.push({
-                                    location: a.name,
-                                    timestamp: parseIsraelTimestamp(a.timeStamp),
-                                    type: a.alertTypeId
-                                });
-                            }
-                        }
-                        resolve(alerts);
-                    } catch (e) { reject(e); }
-                });
-            }
-        );
-        req.on('error', reject);
-        const t = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, HTTP_TIMEOUT_MS);
-        req.on('close', () => clearTimeout(t));
-        req.end();
-    });
+async function fetchAlerts(from, to) {
+    const res = await fetch(`${API_BASE}?from=${from}&to=${to}`, { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'API error');
+    const alerts = [];
+    for (const day of json.payload) {
+        for (const a of day.alerts) {
+            if (a.alertTypeId !== 1 && a.alertTypeId !== 2) continue;
+            alerts.push({ location: a.name, timestamp: parseIsraelTimestamp(a.timeStamp), type: a.alertTypeId });
+        }
+    }
+    return alerts;
 }
 
-function fetchRealtimeCached() {
-    const url = new URL(REALTIME_URL);
-    return new Promise((resolve, reject) => {
-        const req = https.request(
-            { hostname: url.hostname, path: url.pathname, method: 'GET' },
-            (res) => {
-                let data = '';
-                res.on('data', chunk => data += chunk);
-                res.on('end', () => {
-                    try {
-                        const json = JSON.parse(data);
-                        if (!json.success) return reject(new Error(json.error || 'API error'));
-                        const alerts = [];
-                        for (const group of json.payload) {
-                            for (const a of group.alerts) {
-                                if (a.alertTypeId !== 1 && a.alertTypeId !== 2) continue;
-                                alerts.push({
-                                    location: a.name,
-                                    timestamp: parseIsraelTimestamp(a.timeStamp),
-                                    type: a.alertTypeId
-                                });
-                            }
-                        }
-                        resolve(alerts);
-                    } catch (e) { reject(e); }
-                });
-            }
-        );
-        req.on('error', reject);
-        const t = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, HTTP_TIMEOUT_MS);
-        req.on('close', () => clearTimeout(t));
-        req.end();
-    });
+async function fetchRealtimeCached() {
+    const res = await fetch(REALTIME_URL, { signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'API error');
+    const alerts = [];
+    for (const group of json.payload) {
+        for (const a of group.alerts) {
+            if (a.alertTypeId !== 1 && a.alertTypeId !== 2) continue;
+            alerts.push({ location: a.name, timestamp: parseIsraelTimestamp(a.timeStamp), type: a.alertTypeId });
+        }
+    }
+    return alerts;
 }
+
+const _seenAlertKeys = new Set();
 
 function mergeAlerts(existing, incoming) {
-    const seen = new Set(existing.map(a => `${a.timestamp}:${a.location}`));
+    if (_seenAlertKeys.size === 0) {
+        for (const a of existing) _seenAlertKeys.add(`${a.timestamp}:${a.location}`);
+    }
     let added = 0;
     for (const a of incoming) {
         const key = `${a.timestamp}:${a.location}`;
-        if (!seen.has(key)) {
+        if (!_seenAlertKeys.has(key)) {
             existing.push(a);
-            seen.add(key);
+            _seenAlertKeys.add(key);
             added++;
         }
     }
@@ -89,7 +50,6 @@ function mergeAlerts(existing, incoming) {
     return added;
 }
 
-// Shared mutable state for the alert cache
 const state = {
     allAlerts: [],
     parsedCache: null,

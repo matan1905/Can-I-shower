@@ -19,10 +19,11 @@ export async function fetchNearestLocation(lat, lng) {
     return res.json();
 }
 
-export async function fetchDailyRisk({ duration, locations, date }) {
+export async function fetchDailyRisk({ duration, locations, date, debugNow }) {
     let url = `/api/predict/daily-risk?duration=${duration}`;
     if (locations && locations.length) url += `&location=${encodeURIComponent(locations.join('|'))}`;
     if (date) url += `&date=${encodeURIComponent(date)}`;
+    if (debugNow != null) url += `&debugNow=${encodeURIComponent(debugNow)}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error('daily-risk failed');
     return res.json();
@@ -40,12 +41,3 @@ export async function fetchWeights() {
     return res.json();
 }
 
-export async function submitWeights({ weights, viewerId }) {
-    const res = await fetch('/api/weights', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weights, viewerId }),
-    });
-    if (!res.ok) throw new Error('submit weights failed');
-    return res.json();
-}

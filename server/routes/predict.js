@@ -1,11 +1,8 @@
-const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { computeRisk, DEFAULT_PARAMS, parseIsraelTimestamp } = require('../../shared');
+const { computeRisk, DEFAULT_PARAMS, parseIsraelTimestamp, bsearch } = require('../../shared');
 const { formatResult, emptyResponse, getLevel } = require('../services/riskEngine');
 const { getParsedCache } = require('../services/alertFetcher');
-
-const router = express.Router();
 
 function loadModelParams() {
     try {
@@ -21,7 +18,6 @@ const trainedParams = loadModelParams();
 function parseDebugNow(val) {
     if (val == null || val === '') return null;
     const n = Number(val);
-    // Accept epoch in seconds or milliseconds
     if (!Number.isNaN(n) && n > 0) return Math.floor(n < 1e12 ? n : n / 1000);
     return null;
 }
@@ -40,44 +36,45 @@ function resolveLocations(allSalvos, locations, duration, now, params) {
     return worstResult;
 }
 
-router.get('/', (req, res) => {
+function handlePredict(searchParams) {
     const parsed = getParsedCache();
     const allSalvos = parsed.salvos;
-    if (allSalvos.length === 0) return res.json(emptyResponse());
+    if (allSalvos.length === 0) return emptyResponse();
 
-    const locationParam = req.query.location;
+    const locationParam = searchParams.get('location');
     const locations = locationParam ? locationParam.split('|').map(l => l.trim()).filter(Boolean) : [];
-    const duration = Math.max(1, parseInt(req.query.duration, 10) || 15);
-    const now = parseDebugNow(req.query.debugNow) ?? Math.floor(Date.now() / 1000);
+    const duration = Math.max(1, parseInt(searchParams.get('duration'), 10) || 15);
+    const now = parseDebugNow(searchParams.get('debugNow')) ?? Math.floor(Date.now() / 1000);
 
-    const pastSalvos = allSalvos.filter(s => s.timestamp <= now);
-    if (pastSalvos.length === 0) return res.json(emptyResponse());
+    let pastEnd = allSalvos.length;
+    while (pastEnd > 0 && allSalvos[pastEnd - 1].timestamp > now) pastEnd--;
+    if (pastEnd === 0) return emptyResponse();
+    const pastSalvos = pastEnd === allSalvos.length ? allSalvos : allSalvos.slice(0, pastEnd);
 
     if (locations.length > 0) {
         const result = resolveLocations(pastSalvos, locations, duration, now, trainedParams);
-        if (result) return res.json(result);
+        if (result) return result;
     }
 
     const pred = computeRisk(pastSalvos, duration, now, trainedParams);
-    res.json(formatResult(pred, pastSalvos, duration, now));
-});
+    return formatResult(pred, pastSalvos, duration, now);
+}
 
-router.get('/daily-risk', (req, res) => {
+function handleDailyRisk(searchParams) {
     const parsed = getParsedCache();
     const allSalvos = parsed.salvos;
 
-    const locationParam = req.query.location;
+    const locationParam = searchParams.get('location');
     const locations = locationParam ? locationParam.split('|').map(l => l.trim()).filter(Boolean) : [];
-    const duration = Math.max(1, parseInt(req.query.duration, 10) || 15);
+    const duration = Math.max(1, parseInt(searchParams.get('duration'), 10) || 15);
 
-    // Determine the day to compute: default to today in Israel time
-    const nowSec = Math.floor(Date.now() / 1000);
-    const dateParam = req.query.date;
+    const debugNow = parseDebugNow(searchParams.get('debugNow'));
+    const nowSec = debugNow ?? Math.floor(Date.now() / 1000);
+    const dateParam = searchParams.get('date');
     let dayStartSec;
     if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
         dayStartSec = parseIsraelTimestamp(`${dateParam} 00:00:00`);
     } else {
-        // Start of today in Israel time
         const clock = new Intl.DateTimeFormat('en-CA', {
             timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
         }).format(new Date(nowSec * 1000));
@@ -87,21 +84,21 @@ router.get('/daily-risk', (req, res) => {
 
     const INTERVAL_MIN = 15;
     const points = [];
+    let salvoIdx = 0;
 
     for (let minuteOfDay = 0; minuteOfDay < 1440; minuteOfDay += INTERVAL_MIN) {
         const pointSec = dayStartSec + minuteOfDay * 60;
-        const pastSalvos = allSalvos.filter(s => s.timestamp <= pointSec);
+        while (salvoIdx < allSalvos.length && allSalvos[salvoIdx].timestamp <= pointSec) salvoIdx++;
+        const h = Math.floor(minuteOfDay / 60);
+        const m = minuteOfDay % 60;
+        const time = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 
-        if (pastSalvos.length === 0) {
-            points.push({
-                time: `${String(Math.floor(minuteOfDay / 60)).padStart(2, '0')}:${String(minuteOfDay % 60).padStart(2, '0')}`,
-                minuteOfDay,
-                risk: 0,
-                level: 'GREEN',
-            });
+        if (salvoIdx === 0) {
+            points.push({ time, minuteOfDay, risk: 0, level: 'GREEN' });
             continue;
         }
 
+        const pastSalvos = allSalvos.slice(0, salvoIdx);
         let result;
         if (locations.length > 0) {
             result = resolveLocations(pastSalvos, locations, duration, pointSec, trainedParams);
@@ -112,7 +109,7 @@ router.get('/daily-risk', (req, res) => {
         }
 
         points.push({
-            time: `${String(Math.floor(minuteOfDay / 60)).padStart(2, '0')}:${String(minuteOfDay % 60).padStart(2, '0')}`,
+            time,
             minuteOfDay,
             risk: result.risk,
             level: result.level,
@@ -124,7 +121,6 @@ router.get('/daily-risk', (req, res) => {
         timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit'
     }).format(new Date(dayStartSec * 1000));
 
-    // Salvo timestamps within this day for alert markers on the graph
     const salvosInDay = allSalvos
         .filter(s => s.timestamp >= dayStartSec && s.timestamp < dayEndSec)
         .filter(s => locations.length === 0 || locations.some(loc => s.locations && s.locations.has(loc)))
@@ -138,7 +134,7 @@ router.get('/daily-risk', (req, res) => {
             };
         });
 
-    res.json({ date, duration, points, salvos: salvosInDay });
-});
+    return { date, duration, points, salvos: salvosInDay };
+}
 
-module.exports = router;
+module.exports = { handlePredict, handleDailyRisk };

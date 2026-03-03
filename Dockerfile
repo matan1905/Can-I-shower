@@ -1,19 +1,19 @@
-FROM node:20-alpine AS builder
+FROM oven/bun:1-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile || bun install
 
 COPY . .
-RUN npm run build
+RUN bun run build
 
-FROM node:20-alpine
+FROM oven/bun:1-alpine
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY package.json bun.lock* ./
+RUN bun install --production --frozen-lockfile || bun install --production
 
 COPY --from=builder /app/public ./public
 COPY shared.js model.json locations-latlong.json ./
@@ -21,4 +21,4 @@ COPY server ./server
 
 EXPOSE 3000
 
-CMD ["node", "server/index.js"]
+CMD ["bun", "server/index.js"]

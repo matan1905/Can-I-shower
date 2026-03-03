@@ -54,20 +54,15 @@ function getIsraelClock(nowSec) {
 function avg24hSalvosIgnoringQuietDays(salvos) {
     if (!salvos.length) return null;
     const DAY_SEC = 86400;
-    const sorted = [...salvos].sort((a, b) => a.timestamp - b.timestamp);
-    const firstDayStart = Math.floor(sorted[0].timestamp / DAY_SEC) * DAY_SEC;
-    const lastDayEnd = (Math.floor(sorted[sorted.length - 1].timestamp / DAY_SEC) + 1) * DAY_SEC;
-    const dayCounts = [];
-    for (let dayStart = firstDayStart; dayStart < lastDayEnd; dayStart += DAY_SEC) {
-        const dayEnd = dayStart + DAY_SEC;
-        let count = 0;
-        for (const s of sorted) {
-            if (s.timestamp >= dayStart && s.timestamp < dayEnd) count++;
-        }
-        if (count > 0) dayCounts.push(count);
+    const dayCounts = new Map();
+    for (const s of salvos) {
+        const dayKey = Math.floor(s.timestamp / DAY_SEC);
+        dayCounts.set(dayKey, (dayCounts.get(dayKey) || 0) + 1);
     }
-    if (!dayCounts.length) return null;
-    return dayCounts.reduce((a, b) => a + b, 0) / dayCounts.length;
+    if (!dayCounts.size) return null;
+    let total = 0;
+    for (const count of dayCounts.values()) total += count;
+    return total / dayCounts.size;
 }
 
 const DEFAULT_WEIGHTS = {
@@ -79,10 +74,11 @@ const DEFAULT_WEIGHTS = {
     darkness_visibility: 0.1,
 };
 
-function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights) {
+function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights, precomputedGaps) {
     const baseRisk = clamp01(pred.risk || 0);
     const clock = getIsraelClock(nowSec);
     const w = weights || DEFAULT_WEIGHTS;
+    const gaps = precomputedGaps || extractGaps(salvos);
 
     const reasonings = [];
 
@@ -212,7 +208,6 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights) {
     })();
 
     (function () {
-        const gaps = extractGaps(salvos);
         if (gaps.length < 2) return;
         const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
         const lastTs = salvos[salvos.length - 1].timestamp;
@@ -250,7 +245,6 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights) {
     })();
 
     (function () {
-        const gaps = extractGaps(salvos);
         if (gaps.length < 3) return;
         const lastTs = salvos[salvos.length - 1].timestamp;
         const elapsed = Math.max(0.1, (nowSec - lastTs) / 60);
@@ -305,7 +299,7 @@ function applyReasoningEnsemble(pred, salvos, durationMin, nowSec, weights) {
 
 function formatResult(pred, salvos, durationMin, nowSec) {
     const gaps = extractGaps(salvos);
-    const ensemble = applyReasoningEnsemble(pred, salvos, durationMin, nowSec);
+    const ensemble = applyReasoningEnsemble(pred, salvos, durationMin, nowSec, undefined, gaps);
     return {
         risk: ensemble.risk,
         level: getLevel(ensemble.risk),

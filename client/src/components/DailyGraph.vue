@@ -7,17 +7,19 @@ export default {
         salvos: { type: Array, default: () => [] },
         weights: { type: Object, default: () => ({}) },
         isLoading: Boolean,
+        debugNow: { type: [Number, String], default: null },
     },
     setup() {
         return useTranslations();
     },
     data() {
-        return { chart: null };
+        return { chart: null, isZoomed: false };
     },
     watch: {
         points: { handler: 'updateChart', deep: true },
         salvos: { handler: 'updateChart', deep: true },
         weights: { handler: 'updateChart', deep: true },
+        debugNow: 'updateChart',
         lang: 'updateChart',
     },
     mounted() {
@@ -38,24 +40,71 @@ export default {
                 return { ...p, risk };
             });
         },
-        bestTimeWindow() {
-            if (!this.weightedPoints.length) return null;
-            const futurePoints = this.weightedPoints.filter(p => p.minuteOfDay >= this.currentMinuteOfDay);
-            if (!futurePoints.length) return null;
-            let minRisk = Infinity;
-            let best = null;
-            for (const p of futurePoints) {
-                if (p.risk < minRisk) { minRisk = p.risk; best = p; }
+        interpolatedPoints() {
+            const pts = this.weightedPoints;
+            if (pts.length < 2) return pts;
+            const result = [];
+            for (let i = 0; i < pts.length - 1; i++) {
+                const a = pts[i];
+                const b = pts[i + 1];
+                const gap = b.minuteOfDay - a.minuteOfDay;
+                for (let m = a.minuteOfDay; m < b.minuteOfDay; m++) {
+                    const t = (m - a.minuteOfDay) / gap;
+                    result.push({ minuteOfDay: m, risk: a.risk + (b.risk - a.risk) * t });
+                }
             }
-            return best;
+            const last = pts[pts.length - 1];
+            result.push({ minuteOfDay: last.minuteOfDay, risk: last.risk });
+            return result;
+        },
+        bestTimeWindow() {
+            const pts = this.interpolatedPoints;
+            if (!pts.length) return null;
+            const currentMin = this.currentMinuteOfDay;
+            const xRange = this.xAxisRange;
+            let minRisk = Infinity;
+            let bestWrapped = null;
+            for (const p of pts) {
+                let wrapped = p.minuteOfDay;
+                if (wrapped < xRange.min) wrapped += 1440;
+                else if (wrapped > xRange.max) wrapped -= 1440;
+                if (wrapped < currentMin || wrapped < xRange.min || wrapped > xRange.max) continue;
+                if (p.risk < minRisk) {
+                    minRisk = p.risk;
+                    bestWrapped = wrapped;
+                }
+            }
+            if (bestWrapped == null) return null;
+            const display = ((bestWrapped % 1440) + 1440) % 1440;
+            const h = String(Math.floor(display / 60)).padStart(2, '0');
+            const m = String(display % 60).padStart(2, '0');
+            return { minuteOfDay: bestWrapped, risk: minRisk, time: `${h}:${m}` };
         },
         currentMinuteOfDay() {
-            const now = new Date();
-            return now.getHours() * 60 + now.getMinutes();
+            let d;
+            if (this.debugNow != null && this.debugNow !== '') {
+                const n = Number(this.debugNow);
+                d = new Date(n < 1e12 ? n * 1000 : n);
+            } else {
+                d = new Date();
+            }
+            const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit', hour12: false }).format(d).split(':');
+            return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+        },
+        xAxisRange() {
+            const current = this.currentMinuteOfDay;
+            return { min: current - 720, max: current + 720 };
         },
     },
     methods: {
+        resetZoom() {
+            if (!this.chart) return;
+            const xRange = this.xAxisRange;
+            this.chart.zoomX(xRange.min, xRange.max);
+            this.isZoomed = false;
+        },
         updateChart() {
+            this.isZoomed = false;
             if (!this.weightedPoints.length) {
                 if (this.chart) { this.chart.destroy(); this.chart = null; }
                 return;
@@ -64,17 +113,34 @@ export default {
                 const el = this.$refs.chartEl;
                 if (!el) return;
 
-                const minuteToTime = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-                const seriesData = this.weightedPoints.map(p => ({ x: p.minuteOfDay, y: Math.round(p.risk * 100) }));
-                const bestTime = this.bestTimeWindow;
+                const minuteToTime = m => {
+                    const wrapped = ((m % 1440) + 1440) % 1440;
+                    return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
+                };
+                const xRange = this.xAxisRange;
                 const currentMin = this.currentMinuteOfDay;
+
+                const wrapToWindow = (minuteOfDay) => {
+                    let m = minuteOfDay;
+                    if (m < xRange.min) m += 1440;
+                    else if (m > xRange.max) m -= 1440;
+                    return m;
+                };
+
+                const seriesData = this.interpolatedPoints
+                    .map(p => ({ x: wrapToWindow(p.minuteOfDay), y: Math.round(p.risk * 100) }))
+                    .filter(p => p.x >= xRange.min && p.x <= xRange.max)
+                    .sort((a, b) => a.x - b.x);
+                const bestTime = this.bestTimeWindow;
                 const t = this.t;
 
                 const annotations = { xaxis: [] };
 
                 for (const salvo of this.salvos) {
+                    const x = wrapToWindow(salvo.minuteOfDay);
+                    if (x < xRange.min || x > xRange.max) continue;
                     annotations.xaxis.push({
-                        x: salvo.minuteOfDay,
+                        x,
                         borderColor: '#ef4444',
                         strokeDashArray: 0,
                         borderWidth: 1,
@@ -94,20 +160,19 @@ export default {
                 });
 
                 if (bestTime) {
-                    annotations.xaxis.push({
-                        x: bestTime.minuteOfDay,
-                        borderColor: '#4ade80',
-                        strokeDashArray: 0,
-                        borderWidth: 2,
-                        label: {
-                            text: `${t.bestTimeLabel}: ${bestTime.time}`,
-                            style: { color: '#fff', background: '#16a34a', fontSize: '11px' },
-                            position: 'bottom',
-                            offsetY: -10,
-                        },
-                    });
+                    const bestX = wrapToWindow(bestTime.minuteOfDay);
+                    if (bestX >= xRange.min && bestX <= xRange.max) {
+                        annotations.xaxis.push({
+                            x: bestX,
+                            borderColor: '#4ade80',
+                            strokeDashArray: 0,
+                            borderWidth: 2,
+                            label: { text: '', style: { background: 'transparent' } },
+                        });
+                    }
                 }
 
+                const vm = this;
                 const options = {
                     chart: {
                         type: 'area',
@@ -116,13 +181,17 @@ export default {
                         toolbar: { show: false },
                         animations: { enabled: true, speed: 400 },
                         sparkline: { enabled: false },
+                        events: {
+                            zoomed() { vm.isZoomed = true; },
+                            scrolled() { vm.isZoomed = true; },
+                        },
                     },
                     theme: { mode: 'dark' },
                     series: [{ name: '%', data: seriesData }],
                     xaxis: {
                         type: 'numeric',
-                        min: 0,
-                        max: 1440,
+                        min: xRange.min,
+                        max: xRange.max,
                         tickAmount: 8,
                         labels: {
                             formatter: val => minuteToTime(Math.round(val)),
@@ -215,9 +284,10 @@ export default {
     <section class="daily-graph-section glass">
         <div class="daily-graph-header">
             <span class="daily-graph-title">{{ t.dailyGraphTitle }}</span>
-            <span v-if="bestTimeWindow" class="best-time-badge">
-                🚿 {{ t.bestTimeLabel }}: {{ bestTimeWindow.time }}
-            </span>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span v-if="bestTimeWindow" class="best-time-badge">🚿 {{ t.bestTimeLabel }}: {{ bestTimeWindow.time }}</span>
+                <button v-if="isZoomed" class="zoom-reset-btn" @click="resetZoom">↺</button>
+            </div>
         </div>
         <div v-if="isLoading" class="daily-graph-loading">{{ t.loading }}</div>
         <div v-show="!isLoading" ref="chartEl" dir="ltr"></div>

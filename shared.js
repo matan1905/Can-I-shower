@@ -244,12 +244,13 @@ function hasAlertInWindow(timestamps, start, end) {
     return i < timestamps.length && timestamps[i] <= end;
 }
 
+const _israelHourFmt = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false });
+
 function parseIsraelTimestamp(dateStr) {
     const normalized = dateStr.replace(' ', 'T');
     const utcPlus2 = new Date(normalized + '+02:00');
     const utcPlus3 = new Date(normalized + '+03:00');
-    const fmt = new Intl.DateTimeFormat('en', { timeZone: 'Asia/Jerusalem', hour: 'numeric', hour12: false });
-    let localHour2 = parseInt(fmt.format(utcPlus2), 10);
+    let localHour2 = parseInt(_israelHourFmt.format(utcPlus2), 10);
     if (localHour2 === 24) localHour2 = 0;
     const parsedHour = parseInt(dateStr.split(/[\sT]/)[1].split(':')[0], 10);
     if (localHour2 === parsedHour) return Math.floor(utcPlus2.getTime() / 1000);
