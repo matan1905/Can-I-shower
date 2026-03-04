@@ -99,7 +99,16 @@ const translations = {
     },
 };
 
-const lang = ref(localStorage.getItem('lang') || 'he');
+function getInitialLang() {
+    const saved = localStorage.getItem('lang');
+    if (saved) return saved;
+    const deviceLang = (navigator.language || '').toLowerCase();
+    if (deviceLang.startsWith('en')) return 'en';
+    return 'he';
+}
+const _initialLang = getInitialLang();
+if (!localStorage.getItem('lang')) localStorage.setItem('lang', _initialLang);
+const lang = ref(_initialLang);
 document.documentElement.lang = lang.value;
 document.documentElement.dir = lang.value === 'he' ? 'rtl' : 'ltr';
 document.title = translations[lang.value].title;
