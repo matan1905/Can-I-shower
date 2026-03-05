@@ -13,7 +13,7 @@ export default {
         return useTranslations();
     },
     data() {
-        return { chart: null, isZoomed: false };
+        return { chart: null, isZoomed: false, _updateTimer: null };
     },
     watch: {
         points: { handler: 'updateChart', deep: true },
@@ -26,6 +26,7 @@ export default {
         this.updateChart();
     },
     beforeUnmount() {
+        clearTimeout(this._updateTimer);
         if (this.chart) { this.chart.destroy(); this.chart = null; }
     },
     computed: {
@@ -109,7 +110,8 @@ export default {
                 if (this.chart) { this.chart.destroy(); this.chart = null; }
                 return;
             }
-            setTimeout(() => {
+            clearTimeout(this._updateTimer);
+            this._updateTimer = setTimeout(() => {
                 const el = this.$refs.chartEl;
                 if (!el) return;
 

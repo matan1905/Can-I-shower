@@ -16,18 +16,25 @@ function loadModelParams() {
 
 const trainedParams = loadModelParams();
 
-const predictCache = new Map();
-const dailyRiskCache = new Map();
+let predictCache = new Map();
+let dailyRiskCache = new Map();
+let lastCacheClear = Date.now();
 
 function getCached(cache, key) {
+    const now = Date.now();
+    if (now - lastCacheClear >= FETCH_INTERVAL_MS) {
+        predictCache = new Map();
+        dailyRiskCache = new Map();
+        lastCacheClear = now;
+        return null;
+    }
     const entry = cache.get(key);
-    if (entry && Date.now() - entry.ts < FETCH_INTERVAL_MS) return entry.value;
-    cache.delete(key);
+    if (entry) return entry;
     return null;
 }
 
 function setCache(cache, key, value) {
-    cache.set(key, { value, ts: Date.now() });
+    cache.set(key, value);
 }
 
 function parseDebugNow(val) {

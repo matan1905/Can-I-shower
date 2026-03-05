@@ -48,6 +48,8 @@ const translations = {
         dailyGraphSubtitle: 'סיכון לפי שעה ביום',
         bestTimeLabel: 'הזמן הטוב ביותר',
         currentTimeLabel: 'עכשיו',
+        supportTitle: 'נהנים מהאתר?',
+        supportSubtitle: 'עזרו לי להמשיך לתחזק אותו',
     },
     en: {
         title: 'Can I Shower?',
@@ -96,19 +98,12 @@ const translations = {
         dailyGraphSubtitle: 'Risk by time of day',
         bestTimeLabel: 'Best time',
         currentTimeLabel: 'Now',
+        supportTitle: 'Enjoying the site?',
+        supportSubtitle: 'Help me keep it running',
     },
 };
 
-function getInitialLang() {
-    const saved = localStorage.getItem('lang');
-    if (saved) return saved;
-    const deviceLang = (navigator.language || '').toLowerCase();
-    if (deviceLang.startsWith('en')) return 'en';
-    return 'he';
-}
-const _initialLang = getInitialLang();
-if (!localStorage.getItem('lang')) localStorage.setItem('lang', _initialLang);
-const lang = ref(_initialLang);
+const lang = ref(localStorage.getItem('lang') || 'he');
 document.documentElement.lang = lang.value;
 document.documentElement.dir = lang.value === 'he' ? 'rtl' : 'ltr';
 document.title = translations[lang.value].title;

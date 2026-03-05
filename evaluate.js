@@ -1,9 +1,12 @@
-const https = require('https');
 const fs = require('fs');
 const {
     buildSalvos, computeRisk, hasAlertInWindow, parseIsraelTimestamp,
     extractGaps, DEFAULT_PARAMS,
 } = require('./shared');
+
+const REDALERT_BASE = process.env.REDALERT_BASE || 'https://redalert.orielhaim.com';
+const REDALERT_API_KEY = process.env.REDALERT_API_KEY || '';
+const HTTP_TIMEOUT_MS = 30000;
 
 function loadModelParams() {
     try {
@@ -14,48 +17,44 @@ function loadModelParams() {
     }
 }
 
-const API_BASE = 'https://agg.rocketalert.live/api/v1/alerts/details';
-const HTTP_TIMEOUT_MS = 30000;
-
 function isoDate(d) { return d.toISOString().slice(0, 10); }
 function pct(v) { return (v * 100).toFixed(1) + '%'; }
 
-function fetchAlerts(from, to) {
-    const url = new URL(`${API_BASE}?from=${from}&to=${to}`);
-    return new Promise((resolve, reject) => {
-        const req = https.request({
-            hostname: url.hostname, path: url.pathname + url.search, method: 'GET',
-        }, (res) => {
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                try {
-                    const json = JSON.parse(data);
-                    if (!json.success) return reject(new Error(json.error || 'API error'));
-                    const alerts = [];
-                    for (const day of json.payload) {
-                        for (const a of day.alerts) {
-                            if (a.alertTypeId !== 1 && a.alertTypeId !== 2) continue;
-                            alerts.push({
-                                location: a.name,
-                                timestamp: parseIsraelTimestamp(a.timeStamp),
-                                type: a.alertTypeId
-                            });
-                        }
-                    }
-                    resolve(alerts);
-                } catch (e) { reject(e); }
-            });
+async function fetchAlerts(from, to) {
+    const startDate = new Date(from).toISOString();
+    const endDate = new Date(to + 'T23:59:59').toISOString();
+    const alerts = [];
+    let page = 1;
+    let totalPages = 1;
+
+    while (page <= totalPages) {
+        const url = `${REDALERT_BASE}/api/stats/history?page=${page}&limit=100&category=missiles`;
+        const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${REDALERT_API_KEY}` },
+            signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
         });
-        req.on('error', reject);
-        const t = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, HTTP_TIMEOUT_MS);
-        req.on('close', () => clearTimeout(t));
-        req.end();
-    });
+        if (!res.ok) throw new Error(`RedAlert API ${res.status}: ${await res.text()}`);
+        const json = await res.json();
+        totalPages = json.meta.totalPages;
+
+        let reachedCutoff = false;
+        for (const entry of json.data) {
+            const entryTime = new Date(entry.timestamp).getTime();
+            if (entryTime < new Date(startDate).getTime()) { reachedCutoff = true; break; }
+            if (entryTime > new Date(endDate).getTime()) continue;
+            const ts = parseIsraelTimestamp(entry.timestamp.replace('Z', '').replace('.000', ''));
+            for (const city of entry.cities || []) {
+                alerts.push({ location: city.name, timestamp: ts, type: entry.type });
+            }
+        }
+        if (reachedCutoff || json.data.length < 100) break;
+        page++;
+    }
+    return alerts;
 }
 
 async function fetchDateRange(fromDate, toDate) {
-    console.log(`  Fetching ${isoDate(fromDate)} â†’ ${isoDate(toDate)}...`);
+    console.log(`  Fetching ${isoDate(fromDate)} \u2192 ${isoDate(toDate)}...`);
     const alerts = await fetchAlerts(isoDate(fromDate), isoDate(toDate));
     console.log(`  Got ${alerts.length} alerts`);
     return alerts;
@@ -162,7 +161,7 @@ function printCalibration(name, predictions, actuals) {
     const skill = 1 - brier / Math.max(0.001, baselineBrier);
 
     console.log(`\n  ${name}: Brier=${brier.toFixed(4)}, Skill=${skill.toFixed(3)}, BaseRate=${pct(baseRate)}, N=${predictions.length}`);
-    console.log(`  ${'Bin'.padEnd(10)} ${'N'.padStart(5)} ${'Pred'.padStart(7)} ${'Actual'.padStart(7)} ${'Î”'.padStart(8)}`);
+    console.log(`  ${'Bin'.padEnd(10)} ${'N'.padStart(5)} ${'Pred'.padStart(7)} ${'Actual'.padStart(7)} ${'\u0394'.padStart(8)}`);
 
     for (let b = 0; b < numBins; b++) {
         const info = bins[b];

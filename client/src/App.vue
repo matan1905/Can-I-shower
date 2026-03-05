@@ -40,6 +40,7 @@ export default {
                 noData: false, reasonings: [],
             },
             pollTimer: null,
+            pingTimer: null,
         };
     },
     computed: {
@@ -81,11 +82,12 @@ export default {
         this.load();
         this.loadDailyRisk();
         this.pollTimer = setInterval(() => this.load(), 30000);
-        setInterval(() => this.pingViewers(), 25000);
+        this.pingTimer = setInterval(() => this.pingViewers(), 25000);
         this.pingViewers();
     },
     beforeUnmount() {
         clearInterval(this.pollTimer);
+        clearInterval(this.pingTimer);
     },
     watch: {
         duration() { this.load(); this.loadDailyRisk(); },
@@ -222,6 +224,13 @@ export default {
             <section class="controls-card glass">
                 <DurationPicker v-model="duration" />
                 <LocationPicker v-model="selectedLocations" :all-locations="allLocations" />
+            </section>
+            <section class="support-section">
+                <p class="support-title">{{ t.supportTitle }}</p>
+                <p class="support-subtitle">{{ t.supportSubtitle }}</p>
+                <a href="https://buymeacoffee.com/iammatan" target="_blank" rel="noopener" class="support-link">
+                    <img src="/haha_shampoo.png" alt="Buy me a shampoo" class="support-img" />
+                </a>
             </section>
             <InfoCards
                 :minutes-since-last-alert="data.minutesSinceLastAlert"

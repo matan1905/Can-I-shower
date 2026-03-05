@@ -1,68 +1,43 @@
 #!/usr/bin/env node
-/**
- * Fetches all locations from the rocket alert API. The API already returns
- * lat/lon per alert — we collect unique location names and their coordinates
- * and write locations-latlong.json for use with military-target risk calculations.
- * Usage: node scripts/fetch-locations-latlong.js
- */
-
-const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const API_BASE = 'https://agg.rocketalert.live/api/v1/alerts/details';
+const REDALERT_BASE = process.env.REDALERT_BASE || 'https://redalert.orielhaim.com';
+const REDALERT_API_KEY = process.env.REDALERT_API_KEY || '';
 const OUT_FILE = path.join(__dirname, '..', 'locations-latlong.json');
 
-function fetch(url) {
-    return new Promise((resolve, reject) => {
-        const req = https.request(url, { method: 'GET', headers: { Accept: 'application/json' } }, (res) => {
-            let data = '';
-            res.on('data', (chunk) => (data += chunk));
-            res.on('end', () => {
-                try {
-                    const body = data.trim();
-                    if (body.startsWith('<?xml') || body.startsWith('<!')) {
-                        return reject(new Error(`API returned HTML/XML. Body start: ${body.slice(0, 120)}`));
-                    }
-                    resolve(JSON.parse(data));
-                } catch (e) {
-                    reject(e);
-                }
-            });
-        });
-        req.on('error', reject);
-        req.setTimeout(20000, () => {
-            req.destroy();
-            reject(new Error('timeout'));
-        });
-        req.end();
-    });
-}
-
 async function getLocationsWithCoords() {
-    const now = new Date();
-    const from = new Date(now.getTime() - 90 * 86400000);
-    const fromStr = from.toISOString().slice(0, 10);
-    const toStr = now.toISOString().slice(0, 10);
-    const url = `${API_BASE}?from=${fromStr}&to=${toStr}`;
-    const json = await fetch(url);
-    if (!json.success) throw new Error(json.error || 'API error');
     const out = {};
-    for (const day of json.payload || []) {
-        for (const a of day.alerts || []) {
-            if (a.alertTypeId !== 1 && a.alertTypeId !== 2) continue;
-            const lat = a.lat != null ? parseFloat(a.lat) : null;
-            const lon = a.lon != null ? parseFloat(a.lon) : null;
-            if (a.name && lat != null && lon != null && !out[a.name]) {
-                out[a.name] = { lat, lng: lon };
+    let page = 1;
+    let totalPages = 1;
+
+    while (page <= totalPages) {
+        const url = `${REDALERT_BASE}/api/stats/history?page=${page}&limit=100&category=missiles`;
+        const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${REDALERT_API_KEY}` },
+            signal: AbortSignal.timeout(20000),
+        });
+        if (!res.ok) throw new Error(`RedAlert API ${res.status}: ${await res.text()}`);
+        const json = await res.json();
+        totalPages = json.meta.totalPages;
+
+        for (const entry of json.data) {
+            for (const city of entry.cities || []) {
+                const lat = city.lat != null ? parseFloat(city.lat) : null;
+                const lng = city.lng != null ? parseFloat(city.lng) : null;
+                if (city.name && lat != null && lng != null && !out[city.name]) {
+                    out[city.name] = { lat, lng };
+                }
             }
         }
+        if (json.data.length < 100) break;
+        page++;
     }
     return out;
 }
 
 async function main() {
-    console.log('Fetching alerts from API...');
+    console.log('Fetching alerts from RedAlert API...');
     const locations = await getLocationsWithCoords();
     const names = Object.keys(locations).sort();
     console.log(`Found ${names.length} unique locations with coordinates.`);
