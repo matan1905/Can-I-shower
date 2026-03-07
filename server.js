@@ -33,17 +33,27 @@ function loadLocationCoords() {
     return locationCoords;
 }
 
+function haversineKm(lat1, lng1, lat2, lng2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
+
 function findNearestLocation(lat, lng) {
     const locs = loadLocationCoords();
     if (!locs.length) return null;
     let best = null;
-    let bestDist2 = Infinity;
+    let bestKm = Infinity;
     for (const loc of locs) {
-        const dLat = lat - loc.lat;
-        const dLng = lng - loc.lng;
-        const dist2 = dLat * dLat + dLng * dLng;
-        if (dist2 < bestDist2) {
-            bestDist2 = dist2;
+        const km = haversineKm(lat, lng, loc.lat, loc.lng);
+        if (km < bestKm) {
+            bestKm = km;
             best = loc;
         }
     }

@@ -188,6 +188,11 @@ export default {
             navigator.geolocation.getCurrentPosition(
                 async (pos) => {
                     const { latitude: lat, longitude: lng } = pos.coords;
+                    const accuracyM = pos.coords.accuracy != null ? pos.coords.accuracy : Infinity;
+                    if (accuracyM > 10000) {
+                        this.focusLocationInput();
+                        return;
+                    }
                     try {
                         const d = await fetchNearestLocation(lat, lng);
                         if (d && d.name && !this.selectedLocations.includes(d.name)) {
@@ -196,7 +201,7 @@ export default {
                     } catch (_) { this.focusLocationInput(); }
                 },
                 () => this.focusLocationInput(),
-                { enableHighAccuracy: false, timeout: 5000, maximumAge: 600000 }
+                { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
             );
         },
         focusLocationInput() {
