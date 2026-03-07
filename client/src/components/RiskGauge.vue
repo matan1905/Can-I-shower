@@ -8,6 +8,7 @@ export default {
         risk: { type: Number, default: 0 },
         isLoading: Boolean,
         hasData: Boolean,
+        lastAlertIsPreWarning: { type: Boolean, default: false },
         viewerText: { type: String, default: '' },
         riskRec: { type: String, default: '' },
         hasLocation: Boolean,
@@ -18,7 +19,7 @@ export default {
     },
     computed: {
         riskClass() {
-            if (this.risk > 0.4) return 'red';
+            if (this.risk > 0.4) return this.lastAlertIsPreWarning ? 'warning' : 'red';
             if (this.risk >= 0.25) return 'yellow';
             return 'green';
         },
@@ -29,6 +30,7 @@ export default {
         riskLabel() {
             if (this.isLoading) return this.t.loading;
             if (!this.hasData) return this.t.noData;
+            if (this.riskClass === 'warning') return this.t.riskPreWarning;
             if (this.riskClass === 'red') return this.t.riskHigh;
             if (this.riskClass === 'yellow') return this.t.riskMed;
             return this.t.riskLow;
@@ -58,6 +60,9 @@ export default {
                     </linearGradient>
                     <linearGradient id="grad-red" x1="0%" y1="0%" x2="100%" y2="0%">
                         <stop offset="0%" stop-color="#dc2626" /><stop offset="100%" stop-color="#f87171" />
+                    </linearGradient>
+                    <linearGradient id="grad-warning" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#d97706" /><stop offset="100%" stop-color="#f59e0b" />
                     </linearGradient>
                 </defs>
                 <path fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="12" stroke-linecap="round" d="M 16 100 A 84 84 0 0 1 184 100" />

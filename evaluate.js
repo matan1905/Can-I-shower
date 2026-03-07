@@ -1,7 +1,7 @@
 const fs = require('fs');
 const {
     buildSalvos, computeRisk, hasAlertInWindow, parseIsraelTimestamp,
-    extractGaps, DEFAULT_PARAMS,
+    extractGaps, salvosForCalculations, DEFAULT_PARAMS,
 } = require('./shared');
 
 const REDALERT_BASE = process.env.REDALERT_BASE || 'https://redalert.orielhaim.com';
@@ -207,7 +207,8 @@ async function main() {
     console.log(`Period 2 (Feb 2026+): ${parsed2.salvos.length} salvos`);
 
     for (const [label, parsed] of [['Period 1', parsed1], ['Period 2', parsed2]]) {
-        const gaps = extractGaps(parsed.salvos);
+        const calcSalvos = salvosForCalculations(parsed.salvos);
+        const gaps = extractGaps(calcSalvos);
         if (gaps.length === 0) continue;
         const sorted = [...gaps].sort((a, b) => a - b);
         const spanHours = ((parsed.salvos[parsed.salvos.length - 1].timestamp - parsed.salvos[0].timestamp) / 3600).toFixed(1);

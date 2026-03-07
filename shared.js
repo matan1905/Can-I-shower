@@ -1,24 +1,64 @@
 const SALVO_WINDOW_SEC = 120;
 const DAY_SEC = 86400;
+// Git CSV category 14; RedAlert category "newsFlash"
+const PRE_WARNING_TYPES = new Set([14, 'newsFlash']);
+const PRE_WARNING_WINDOW_MIN = 10;
+
+function isPreWarningType(type) {
+    return type !== undefined && PRE_WARNING_TYPES.has(type);
+}
 
 function buildSalvos(alerts) {
     if (!alerts.length) return { salvos: [], locations: [] };
     const sorted = [...alerts].sort((a, b) => a.timestamp - b.timestamp);
     const salvos = [];
-    let cur = { timestamp: sorted[0].timestamp, locations: new Set([sorted[0].location]) };
+    const first = sorted[0];
+    const cur = {
+        timestamp: first.timestamp,
+        locations: new Set([first.location]),
+        types: new Set(typeof first.type !== 'undefined' ? [first.type] : []),
+    };
     for (let i = 1; i < sorted.length; i++) {
         const a = sorted[i];
         if (a.timestamp - cur.timestamp <= SALVO_WINDOW_SEC) {
             cur.locations.add(a.location);
+            if (typeof a.type !== 'undefined') cur.types.add(a.type);
         } else {
-            salvos.push(cur);
-            cur = { timestamp: a.timestamp, locations: new Set([a.location]) };
+            salvos.push({
+                timestamp: cur.timestamp,
+                locations: cur.locations,
+                isPreWarning: cur.types.size > 0 && [...cur.types].every(t => isPreWarningType(t)),
+            });
+            cur.timestamp = a.timestamp;
+            cur.locations = new Set([a.location]);
+            cur.types = new Set(typeof a.type !== 'undefined' ? [a.type] : []);
         }
     }
-    salvos.push(cur);
+    salvos.push({
+        timestamp: cur.timestamp,
+        locations: cur.locations,
+        isPreWarning: cur.types.size > 0 && [...cur.types].every(t => isPreWarningType(t)),
+    });
     const locations = new Set();
     for (const a of sorted) locations.add(a.location);
     return { salvos, locations: Array.from(locations).sort() };
+}
+
+function salvosForCalculations(salvos) {
+    if (!salvos.length) return [];
+    const hasPreWarning = salvos.some(s => s && s.isPreWarning === true);
+    if (!hasPreWarning) return salvos;
+    const drop = new Set();
+    for (let i = 0; i < salvos.length; i++) {
+        if (!salvos[i].isPreWarning) continue;
+        for (let j = i + 1; j < salvos.length; j++) {
+            if (salvos[j].isPreWarning) continue;
+            const gapMin = (salvos[j].timestamp - salvos[i].timestamp) / 60;
+            if (gapMin <= PRE_WARNING_WINDOW_MIN) drop.add(i);
+            break;
+        }
+    }
+    return salvos.filter((_, i) => !drop.has(i));
 }
 
 // ==================== Two-state hunger model ====================
@@ -165,11 +205,13 @@ function computeBarrageRisk(gaps, elapsed, durationMin) {
 
 function computeRisk(salvos, windowMin, nowSec, params) {
     const p = params || DEFAULT_PARAMS;
+    const calcSalvos = salvosForCalculations(salvos);
 
-    if (salvos.length < 2) {
-        const last = salvos.length === 1 ? salvos[0] : null;
+    if (calcSalvos.length < 2) {
+        const last = salvos.length >= 1 ? salvos[salvos.length - 1] : null;
         const elapsed = last ? (nowSec - last.timestamp) / 60 : null;
-        let risk = last ? 0.5 : 0;
+        const countSalvo = calcSalvos.length === 1 ? calcSalvos[0] : null;
+        let risk = countSalvo ? 0.5 : 0;
 
         if (elapsed != null && elapsed > 0) {
             const quietBlocks = Math.floor(elapsed / (12 * 60));
@@ -185,19 +227,21 @@ function computeRisk(salvos, windowMin, nowSec, params) {
             minutesSinceLastAlert: elapsed,
             lastAlertTime: last ? last.timestamp : null,
             lastAlertLocations: last ? Array.from(last.locations) : [],
-            salvoCount: salvos.length,
+            lastAlertIsPreWarning: last ? !!last.isPreWarning : false,
+            salvoCount: calcSalvos.length,
             gapStats: null,
             avgGapLast10Minutes: null,
             hungerInfo: null,
         };
     }
 
-    const lastTs = salvos[salvos.length - 1].timestamp;
+    const lastSalvo = salvos[salvos.length - 1];
+    const lastTs = lastSalvo.timestamp;
     const elapsed = (nowSec - lastTs) / 60;
-    const hunger = simulateHunger(salvos, nowSec, p);
+    const hunger = simulateHunger(calcSalvos, nowSec, p);
     const tensionRisk = hungerToRisk(hunger, windowMin, p);
 
-    const gaps = extractGaps(salvos);
+    const gaps = extractGaps(calcSalvos);
     const barrageRisk = computeBarrageRisk(gaps, elapsed, windowMin);
 
     const halflife = Math.max(1, p.barrage_halflife || 10);
@@ -207,12 +251,12 @@ function computeRisk(salvos, windowMin, nowSec, params) {
     const sorted = [...gaps].sort((a, b) => a - b);
     const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
     const recentCutoff = nowSec - 7 * DAY_SEC;
-    const recentSalvos = salvos.filter(s => s.timestamp >= recentCutoff);
+    const recentSalvos = calcSalvos.filter(s => s.timestamp >= recentCutoff);
     const roundGaps = extractRoundGaps(recentSalvos);
     const avgGapLast10Minutes = roundGaps.length
         ? roundGaps.reduce((a, b) => a + b, 0) / roundGaps.length
         : null;
-    let expectedWait = estimateExpectedWait(salvos, nowSec, windowMin, p);
+    let expectedWait = estimateExpectedWait(calcSalvos, nowSec, windowMin, p);
 
     if (elapsed > 0) {
         const quietBlocks = Math.floor(elapsed / (12 * 60));
@@ -234,8 +278,9 @@ function computeRisk(salvos, windowMin, nowSec, params) {
         expectedWait,
         minutesSinceLastAlert: elapsed,
         lastAlertTime: lastTs,
-        lastAlertLocations: Array.from(salvos[salvos.length - 1].locations),
-        salvoCount: salvos.length,
+        lastAlertLocations: Array.from(lastSalvo.locations),
+        lastAlertIsPreWarning: !!lastSalvo.isPreWarning,
+        salvoCount: calcSalvos.length,
         gapStats: {
             mean,
             median: sorted[Math.floor(sorted.length / 2)],
@@ -248,26 +293,29 @@ function computeRisk(salvos, windowMin, nowSec, params) {
     };
 }
 
-function computeRiskFromState(hungerState, salvos, windowMin, nowSec, params) {
+function computeRiskFromState(hungerState, salvos, windowMin, nowSec, params, calcSalvosOptional) {
     const p = params || DEFAULT_PARAMS;
+    const calcSalvos = calcSalvosOptional != null ? calcSalvosOptional : salvosForCalculations(salvos);
 
-    if (salvos.length < 2) {
-        const last = salvos.length === 1 ? salvos[0] : null;
+    if (calcSalvos.length < 2) {
+        const last = salvos.length >= 1 ? salvos[salvos.length - 1] : null;
         const elapsed = last ? (nowSec - last.timestamp) / 60 : null;
-        let risk = last ? 0.5 : 0;
+        const countSalvo = calcSalvos.length === 1 ? calcSalvos[0] : null;
+        let risk = countSalvo ? 0.5 : 0;
         if (elapsed != null && elapsed > 0) {
             const quietBlocks = Math.floor(elapsed / (12 * 60));
             if (quietBlocks > 0) risk *= Math.pow(0.6, quietBlocks);
         }
-        return { risk, expectedWait: null, minutesSinceLastAlert: elapsed, lastAlertTime: last ? last.timestamp : null, lastAlertLocations: last ? Array.from(last.locations) : [], salvoCount: salvos.length, gapStats: null, avgGapLast10Minutes: null, hungerInfo: null };
+        return { risk, expectedWait: null, minutesSinceLastAlert: elapsed, lastAlertTime: last ? last.timestamp : null, lastAlertLocations: last ? Array.from(last.locations) : [], lastAlertIsPreWarning: last ? !!last.isPreWarning : false, salvoCount: calcSalvos.length, gapStats: null, avgGapLast10Minutes: null, hungerInfo: null };
     }
 
-    const lastTs = salvos[salvos.length - 1].timestamp;
+    const lastSalvoFromState = salvos[salvos.length - 1];
+    const lastTs = lastSalvoFromState.timestamp;
     const elapsed = (nowSec - lastTs) / 60;
     const { hunger } = hungerState;
     const tensionRisk = hungerToRisk(hunger, windowMin, p);
 
-    const gaps = extractGaps(salvos);
+    const gaps = extractGaps(calcSalvos);
     const barrageRisk = computeBarrageRisk(gaps, elapsed, windowMin);
 
     const halflife = Math.max(1, p.barrage_halflife || 10);
@@ -277,10 +325,10 @@ function computeRiskFromState(hungerState, salvos, windowMin, nowSec, params) {
     const sorted = [...gaps].sort((a, b) => a - b);
     const mean = gaps.reduce((a, b) => a + b, 0) / gaps.length;
     const recentCutoff = nowSec - 7 * DAY_SEC;
-    const recentSalvos = salvos.filter(s => s.timestamp >= recentCutoff);
+    const recentSalvos = calcSalvos.filter(s => s.timestamp >= recentCutoff);
     const roundGaps = extractRoundGaps(recentSalvos);
     const avgGapLast10Minutes = roundGaps.length ? roundGaps.reduce((a, b) => a + b, 0) / roundGaps.length : null;
-    let expectedWait = estimateExpectedWait(salvos, nowSec, windowMin, p);
+    let expectedWait = estimateExpectedWait(calcSalvos, nowSec, windowMin, p);
 
     if (elapsed > 0) {
         const quietBlocks = Math.floor(elapsed / (12 * 60));
@@ -298,8 +346,9 @@ function computeRiskFromState(hungerState, salvos, windowMin, nowSec, params) {
         expectedWait,
         minutesSinceLastAlert: elapsed,
         lastAlertTime: lastTs,
-        lastAlertLocations: Array.from(salvos[salvos.length - 1].locations),
-        salvoCount: salvos.length,
+        lastAlertLocations: Array.from(lastSalvoFromState.locations),
+        lastAlertIsPreWarning: !!lastSalvoFromState.isPreWarning,
+        salvoCount: calcSalvos.length,
         gapStats: { mean, median: sorted[Math.floor(sorted.length / 2)], min: sorted[0], max: sorted[sorted.length - 1], count: gaps.length },
         avgGapLast10Minutes,
         hungerInfo: { hunger, barrageRisk, barrageWeight, tensionRisk, elapsed, params: p },
@@ -358,8 +407,8 @@ function parseIsraelTimestamp(dateStr) {
 }
 
 module.exports = {
-    SALVO_WINDOW_SEC, DAY_SEC,
-    buildSalvos,
+    SALVO_WINDOW_SEC, DAY_SEC, PRE_WARNING_TYPES, PRE_WARNING_WINDOW_MIN,
+    buildSalvos, salvosForCalculations,
     computeRisk, computeRiskFromState, extractGaps, extractRoundGaps,
     simulateHunger, simulateHungerState, simulateHungerStateFrom, advanceState, hungerToRisk, estimateExpectedWait,
     DEFAULT_PARAMS,

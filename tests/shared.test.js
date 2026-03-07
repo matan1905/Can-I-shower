@@ -3,6 +3,7 @@ import {
     buildSalvos,
     computeRisk,
     extractGaps,
+    salvosForCalculations,
     parseIsraelTimestamp,
     hungerToRisk,
     advanceState,
@@ -86,6 +87,89 @@ describe('buildSalvos', () => {
         ];
         const { salvos } = buildSalvos(alerts);
         expect(salvos[0].timestamp).toBe(BASE_TS);
+    });
+
+    it('sets isPreWarning true when all alerts in salvo have type 14', () => {
+        const alerts = [
+            { location: 'A', timestamp: BASE_TS, type: 14 },
+            { location: 'B', timestamp: BASE_TS + 60, type: 14 },
+        ];
+        const { salvos } = buildSalvos(alerts);
+        expect(salvos).toHaveLength(1);
+        expect(salvos[0].isPreWarning).toBe(true);
+    });
+
+    it('sets isPreWarning false when salvo has mixed or non-14 types', () => {
+        const alerts = [
+            { location: 'A', timestamp: BASE_TS, type: 1 },
+            { location: 'B', timestamp: BASE_TS + 60, type: 14 },
+        ];
+        const { salvos } = buildSalvos(alerts);
+        expect(salvos).toHaveLength(1);
+        expect(salvos[0].isPreWarning).toBe(false);
+    });
+
+    it('sets isPreWarning true when all alerts have type newsFlash (RedAlert)', () => {
+        const alerts = [
+            { location: 'A', timestamp: BASE_TS, type: 'newsFlash' },
+            { location: 'B', timestamp: BASE_TS + 60, type: 'newsFlash' },
+        ];
+        const { salvos } = buildSalvos(alerts);
+        expect(salvos).toHaveLength(1);
+        expect(salvos[0].isPreWarning).toBe(true);
+    });
+});
+
+describe('salvosForCalculations', () => {
+    it('returns same array when no pre-warnings', () => {
+        const salvos = [
+            { timestamp: BASE_TS, locations: new Set(['A']), isPreWarning: false },
+            { timestamp: BASE_TS + 30 * MIN, locations: new Set(['B']), isPreWarning: false },
+        ];
+        const out = salvosForCalculations(salvos);
+        expect(out).toHaveLength(2);
+        expect(out[0].timestamp).toBe(BASE_TS);
+        expect(out[1].timestamp).toBe(BASE_TS + 30 * MIN);
+    });
+
+    it('returns same array when salvos have no isPreWarning (backward compat)', () => {
+        const salvos = [
+            { timestamp: BASE_TS, locations: new Set(['A']) },
+            { timestamp: BASE_TS + 30 * MIN, locations: new Set(['B']) },
+        ];
+        const out = salvosForCalculations(salvos);
+        expect(out).toHaveLength(2);
+    });
+
+    it('drops pre-warning when actual follows within 10 min', () => {
+        const salvos = [
+            { timestamp: BASE_TS, locations: new Set(['A']), isPreWarning: true },
+            { timestamp: BASE_TS + 5 * MIN, locations: new Set(['B']), isPreWarning: false },
+        ];
+        const out = salvosForCalculations(salvos);
+        expect(out).toHaveLength(1);
+        expect(out[0].timestamp).toBe(BASE_TS + 5 * MIN);
+        expect(out[0].isPreWarning).toBe(false);
+    });
+
+    it('keeps pre-warning when actual follows after 10 min', () => {
+        const salvos = [
+            { timestamp: BASE_TS, locations: new Set(['A']), isPreWarning: true },
+            { timestamp: BASE_TS + 15 * MIN, locations: new Set(['B']), isPreWarning: false },
+        ];
+        const out = salvosForCalculations(salvos);
+        expect(out).toHaveLength(2);
+        expect(out[0].isPreWarning).toBe(true);
+        expect(out[1].isPreWarning).toBe(false);
+    });
+
+    it('keeps pre-warning when no actual follows', () => {
+        const salvos = [
+            { timestamp: BASE_TS, locations: new Set(['A']), isPreWarning: true },
+        ];
+        const out = salvosForCalculations(salvos);
+        expect(out).toHaveLength(1);
+        expect(out[0].isPreWarning).toBe(true);
     });
 });
 
@@ -250,5 +334,21 @@ describe('computeRisk', () => {
         const result = computeRisk(salvos, 15, BASE_TS + HOUR, DEFAULT_PARAMS);
         expect(result.hungerInfo).not.toBeNull();
         expect(typeof result.hungerInfo.hunger).toBe('number');
+    });
+
+    it('uses full salvos for lastAlert and calc salvos for gapStats when pre-warning followed by actual', () => {
+        const salvos = [
+            { timestamp: BASE_TS, locations: new Set(['A']), isPreWarning: true },
+            { timestamp: BASE_TS + 5 * MIN, locations: new Set(['B']), isPreWarning: false },
+            { timestamp: BASE_TS + 65 * MIN, locations: new Set(['C']), isPreWarning: false },
+        ];
+        const nowSec = BASE_TS + 2 * HOUR;
+        const result = computeRisk(salvos, 15, nowSec, DEFAULT_PARAMS);
+        expect(result.lastAlertTime).toBe(BASE_TS + 65 * MIN);
+        expect(result.minutesSinceLastAlert).toBeCloseTo((2 * HOUR - 65 * MIN) / 60);
+        expect(result.salvoCount).toBe(2);
+        expect(result.gapStats).not.toBeNull();
+        expect(result.gapStats.count).toBe(1);
+        expect(result.gapStats.mean).toBeCloseTo(60);
     });
 });

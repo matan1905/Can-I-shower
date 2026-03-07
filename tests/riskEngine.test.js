@@ -107,12 +107,12 @@ describe('applyReasoningEnsemble', () => {
     const salvos = makeSalvos(10, BASE_TS - 15 * HOUR);
     const pred = computeRisk(salvos, 15, BASE_TS, DEFAULT_PARAMS);
 
-    it('returns 6 reasonings', () => {
+    it('returns 7 reasonings', () => {
         const { reasonings } = applyReasoningEnsemble(pred, salvos, 15, BASE_TS);
-        expect(reasonings).toHaveLength(6);
+        expect(reasonings).toHaveLength(7);
     });
 
-    it('includes all 6 required reasoning IDs', () => {
+    it('includes all 7 required reasoning IDs', () => {
         const { reasonings } = applyReasoningEnsemble(pred, salvos, 15, BASE_TS);
         const ids = reasonings.map(r => r.id);
         expect(ids).toContain('core_hunger_model');
@@ -121,6 +121,7 @@ describe('applyReasoningEnsemble', () => {
         expect(ids).toContain('weibull_hazard');
         expect(ids).toContain('muslim_prayer_times');
         expect(ids).toContain('darkness_visibility');
+        expect(ids).toContain('time_in_day');
     });
 
     it('weights normalize to 1.0', () => {

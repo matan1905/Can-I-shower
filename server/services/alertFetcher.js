@@ -15,12 +15,12 @@ function isoDate(d) { return d.toISOString().slice(0, 10); }
 
 // ── RedAlert (primary) ──────────────────────────────────────────────
 
-async function fetchRedAlertPage(page) {
+async function fetchRedAlertPage(page, category = 'missiles') {
     const offset = (page - 1) * PAGE_LIMIT;
     const params = new URLSearchParams({
         offset: String(offset),
         limit: String(PAGE_LIMIT),
-        category: 'missiles',
+        category,
     });
     const url = `${REDALERT_HISTORY_URL}?${params}`;
 
@@ -37,7 +37,11 @@ async function fetchRedAlertPage(page) {
 }
 
 function parseRedAlertEntry(entry) {
-    const ts = parseIsraelTimestamp(entry.timestamp.replace('Z', '').replace('.000', ''));
+    const raw = entry.timestamp;
+    // RedAlert API returns UTC (Z suffix). Parsing as Israel time would make alerts ~2h older.
+    const ts = raw && raw.endsWith('Z')
+        ? Math.floor(new Date(raw).getTime() / 1000)
+        : parseIsraelTimestamp(raw.replace('Z', '').replace('.000', ''));
     return (entry.cities || []).map(city => ({ location: city.name, timestamp: ts, type: entry.type }));
 }
 
@@ -51,9 +55,9 @@ function parseRedAlertPage(json, cutoff) {
     return { alerts, reachedCutoff };
 }
 
-async function fetchRedAlertHistory(startDate) {
+async function fetchRedAlertHistory(startDate, category = 'missiles') {
     const cutoff = startDate ? new Date(startDate).getTime() : 0;
-    const firstPage = await fetchRedAlertPage(1);
+    const firstPage = await fetchRedAlertPage(1, category);
     const { total } = firstPage.pagination;
     const totalPages = Math.ceil(total / PAGE_LIMIT);
     const { alerts, reachedCutoff } = parseRedAlertPage(firstPage, cutoff);
@@ -64,7 +68,7 @@ async function fetchRedAlertHistory(startDate) {
         const pages = [];
         for (let p = batchStart; p <= batchEnd; p++) pages.push(p);
 
-        const results = await Promise.all(pages.map(p => fetchRedAlertPage(p)));
+        const results = await Promise.all(pages.map(p => fetchRedAlertPage(p, category)));
         let done = false;
         for (const json of results) {
             const parsed = parseRedAlertPage(json, cutoff);
@@ -75,8 +79,8 @@ async function fetchRedAlertHistory(startDate) {
     }
     return alerts;
 }
-async function fetchRedAlertRecent() {
-    const json = await fetchRedAlertPage(1);
+async function fetchRedAlertRecent(category = 'missiles') {
+    const json = await fetchRedAlertPage(1, category);
     const alerts = [];
     for (const entry of json.data) alerts.push(...parseRedAlertEntry(entry));
     return alerts;
@@ -190,14 +194,16 @@ async function fetchHistorical(historyDays) {
     const from = isoDate(startDate);
     const to = isoDate(new Date());
 
-    const [primary, rocketAlerts, realtime, gitAlerts] = await Promise.all([
-        fetchRedAlertHistory(startDate).catch(e => { console.error('RedAlert failed:', e.message); return null; }),
+    const [missilesAlerts, newsFlashAlerts, rocketAlerts, realtime, gitAlerts] = await Promise.all([
+        fetchRedAlertHistory(startDate, 'missiles').catch(e => { console.error('RedAlert missiles failed:', e.message); return []; }),
+        fetchRedAlertHistory(startDate, 'newsFlash').catch(e => { console.error('RedAlert newsFlash failed:', e.message); return []; }),
         fetchRocketAlerts(from, to).catch(() => []),
         fetchRocketAlertRealtime().catch(() => []),
         fetchGitAlerts(historyDays).catch(() => []),
     ]);
 
-    if (primary && primary.length > 0) {
+    const primary = [...(missilesAlerts || []), ...(newsFlashAlerts || [])];
+    if (primary.length > 0) {
         mergeAlerts(state.allAlerts, primary);
     } else {
         mergeAlerts(state.allAlerts, rocketAlerts);
@@ -221,14 +227,16 @@ function trimOldAlerts() {
 }
 
 async function fetchRecent() {
-    const [recent, rocketAlerts, realtime] = await Promise.all([
-        fetchRedAlertRecent().catch(e => { console.error('RedAlert recent failed:', e.message); return null; }),
+    const [recentMissiles, recentNewsFlash, rocketAlerts, realtime] = await Promise.all([
+        fetchRedAlertRecent('missiles').catch(e => { console.error('RedAlert recent missiles failed:', e.message); return []; }),
+        fetchRedAlertRecent('newsFlash').catch(e => { console.error('RedAlert recent newsFlash failed:', e.message); return []; }),
         fetchRocketAlerts(isoDate(new Date(Date.now() - 2 * 86400000)), isoDate(new Date())).catch(() => []),
         fetchRocketAlertRealtime().catch(() => []),
     ]);
 
+    const recent = [...(recentMissiles || []), ...(recentNewsFlash || [])];
     let changed = trimOldAlerts();
-    if (recent && recent.length > 0) {
+    if (recent.length > 0) {
         if (mergeAlerts(state.allAlerts, recent) > 0) changed = true;
     } else {
         if (mergeAlerts(state.allAlerts, rocketAlerts) + mergeAlerts(state.allAlerts, realtime) > 0) changed = true;

@@ -4,7 +4,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const {
-    buildSalvos, computeRisk, extractGaps, parseIsraelTimestamp, DEFAULT_PARAMS
+    buildSalvos, computeRisk, extractGaps, salvosForCalculations, parseIsraelTimestamp, DEFAULT_PARAMS
 } = require('./shared');
 
 const app = express();
@@ -204,7 +204,7 @@ function parseDebugNow(val) {
 function emptyResponse() {
     return {
         risk: 0, level: 'GREEN', minutesSinceLastAlert: null,
-        lastAlertTime: null, lastAlertLocations: [], salvoCount: 0,
+        lastAlertTime: null, lastAlertLocations: [], lastAlertIsPreWarning: false, salvoCount: 0,
         gapStats: null, trend: 'stable',
         expectedNextAlert: null,
         avgGapLast10Minutes: null,
@@ -458,6 +458,7 @@ function formatResult(pred, salvos, durationMin, nowSec) {
         minutesSinceLastAlert: pred.minutesSinceLastAlert,
         lastAlertTime: pred.lastAlertTime,
         lastAlertLocations: pred.lastAlertLocations,
+        lastAlertIsPreWarning: !!pred.lastAlertIsPreWarning,
         salvoCount: pred.salvoCount,
         gapStats: pred.gapStats,
         trend: computeTrend(gaps.slice(-20)),
@@ -494,10 +495,11 @@ app.get('/api/predict', (req, res) => {
 
     const pastSalvos = allSalvos.filter(s => s.timestamp <= now);
     if (pastSalvos.length === 0) return res.json(emptyResponse());
+    const pastCalcSalvos = salvosForCalculations(pastSalvos);
 
     if (locations.length === 0) {
         const pred = computeRisk(pastSalvos, duration, now, trainedParams);
-        return res.json(formatResult(pred, pastSalvos, duration, now));
+        return res.json(formatResult(pred, pastCalcSalvos, duration, now));
     }
 
     let worstRisk = -1;
@@ -509,13 +511,14 @@ app.get('/api/predict', (req, res) => {
         const pred = computeRisk(filtered, duration, now, trainedParams);
         if (pred.risk > worstRisk) {
             worstRisk = pred.risk;
-            worstResult = formatResult(pred, filtered, duration, now);
+            const calcFiltered = salvosForCalculations(filtered);
+            worstResult = formatResult(pred, calcFiltered, duration, now);
         }
     }
     if (worstResult) return res.json(worstResult);
 
     const pred = computeRisk(pastSalvos, duration, now, trainedParams);
-    return res.json(formatResult(pred, pastSalvos, duration, now));
+    return res.json(formatResult(pred, pastCalcSalvos, duration, now));
 });
 
 app.get('/api/locations', (req, res) => {

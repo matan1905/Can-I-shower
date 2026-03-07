@@ -511,6 +511,7 @@ function formatResult(pred, salvos, durationMin, nowSec) {
         minutesSinceLastAlert: pred.minutesSinceLastAlert,
         lastAlertTime: pred.lastAlertTime,
         lastAlertLocations: pred.lastAlertLocations,
+        lastAlertIsPreWarning: !!pred.lastAlertIsPreWarning,
         salvoCount: pred.salvoCount,
         gapStats: pred.gapStats,
         trend: computeTrend(roundGaps.slice(-20)),
@@ -525,7 +526,7 @@ function formatResult(pred, salvos, durationMin, nowSec) {
 function emptyResponse() {
     return {
         risk: 0, level: 'GREEN', minutesSinceLastAlert: null,
-        lastAlertTime: null, lastAlertLocations: [], salvoCount: 0,
+        lastAlertTime: null, lastAlertLocations: [], lastAlertIsPreWarning: false, salvoCount: 0,
         gapStats: null, trend: 'stable',
         expectedNextAlert: null,
         avgGapLast10Minutes: null,

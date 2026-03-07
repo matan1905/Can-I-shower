@@ -140,12 +140,13 @@ export default {
 
                 for (const salvo of this.salvos) {
                     if (salvo.minuteOfDay < xRange.min || salvo.minuteOfDay > currentMin) continue;
+                    const isPreWarning = !!salvo.isPreWarning;
                     annotations.xaxis.push({
                         x: salvo.minuteOfDay,
-                        borderColor: '#ef4444',
-                        strokeDashArray: 0,
+                        borderColor: isPreWarning ? '#f59e0b' : '#ef4444',
+                        strokeDashArray: isPreWarning ? 4 : 0,
                         borderWidth: 1,
-                        opacity: 0.5,
+                        opacity: 0.6,
                         label: { text: '', style: { background: 'transparent' } },
                     });
                 }

@@ -38,7 +38,7 @@ export default {
                 risk: 0, minutesSinceLastAlert: null,
                 salvoCount: 0, trend: 'stable',
                 expectedNextAlert: null, avgGapLast10Minutes: null,
-                noData: false, reasonings: [],
+                noData: false, reasonings: [], lastAlertIsPreWarning: false,
             },
             pollTimer: null,
             pingTimer: null,
@@ -58,7 +58,7 @@ export default {
         riskRec() {
             if (!this.hasData) return '';
             const r = this.weightedRisk;
-            if (r >= 0.5) return this.t.recHigh;
+            if (r >= 0.5) return this.data.lastAlertIsPreWarning ? this.t.recPreWarning : this.t.recHigh;
             if (r >= 0.25) return this.t.recMed;
             return this.t.recLow;
         },
@@ -222,6 +222,7 @@ export default {
                 :risk="weightedRisk"
                 :is-loading="isInitialLoading"
                 :has-data="hasData"
+                :last-alert-is-pre-warning="!!data.lastAlertIsPreWarning"
                 :viewer-text="viewerText"
                 :risk-rec="riskRec"
                 :has-location="selectedLocations.length > 0"
