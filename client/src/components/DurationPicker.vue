@@ -41,7 +41,7 @@ export default {
             <button v-for="d in quickDurations" :key="d" class="dur-pill" :class="{ active: modelValue === d && !isCustomFocused }" @click="pick(d)">
                 {{ d }} {{ t.min }}
             </button>
-            <input type="number" class="dur-custom" :placeholder="t.custom" v-model.number="customDuration" @focus="isCustomFocused = true" @blur="onCustomBlur" @input="onCustomInput" min="1">
+            <input type="number" inputmode="numeric" class="dur-custom" :placeholder="t.custom" v-model.number="customDuration" @focus="isCustomFocused = true" @blur="onCustomBlur" @input="onCustomInput" min="1">
         </div>
     </div>
 </template>
