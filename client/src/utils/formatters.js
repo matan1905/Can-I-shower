@@ -4,7 +4,7 @@ export function fmtMin(m, t) {
     if (m < 60) return `${Math.round(m)} ${t.minutes}`;
     const h = Math.floor(m / 60);
     const rm = Math.round(m % 60);
-    if (h < 24) return h + ' ' + t.hours + (rm > 0 ? ' ' + t.and + rm + ' ' + t.min : '');
+    if (h < 24) return h + ' ' + t.hours + (rm > 0 ? ' ' + t.and + rm + ' ' + t.minutes : '');
     return `${Math.floor(h / 24)} ${t.days}`;
 }
 
