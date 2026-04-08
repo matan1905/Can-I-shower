@@ -214,24 +214,9 @@ export default {
 
 <template>
     <div>
-        <div class="bg-blobs"><span class="b1"></span><span class="b2"></span><span class="b3"></span></div>
-        <div class="app">
-            <DebugPanel v-if="isDebug" v-model="debugNow" :on-fake-toast="() => $refs.donationToast?.addFakeToast()" />
-            <AppHeader :connected="isConnected" />
-            <RiskGauge
-                :risk="weightedRisk"
-                :is-loading="isInitialLoading"
-                :has-data="hasData"
-                :last-alert-is-pre-warning="!!data.lastAlertIsPreWarning"
-                :viewer-text="viewerText"
-                :risk-rec="riskRec"
-                :has-location="selectedLocations.length > 0"
-                @locate="startLocationAssist"
-            />
-            <section class="controls-card glass">
-                <DurationPicker v-model="duration" />
-                <LocationPicker v-model="selectedLocations" :all-locations="allLocations" />
-            </section>
+             <div class="app">
+            YES / כן
+            
             <section class="support-section">
                 <p class="support-title">{{ t.supportTitle }}</p>
                 <p class="support-subtitle">{{ t.supportSubtitle }}</p>
@@ -239,16 +224,7 @@ export default {
                     <img src="/haha_shampoo.png" alt="Buy me a shampoo" class="support-img" />
                 </a>
             </section>
-            <InfoCards
-                :minutes-since-last-alert="data.minutesSinceLastAlert"
-                :avg-gap-last10-minutes="data.avgGapLast10Minutes"
-                :salvo-count="data.salvoCount"
-                :trend="data.trend"
-            />
-            <DailyGraph :points="dailyPoints" :salvos="dailySalvos" :weights="userWeights" :is-loading="isDailyLoading" :debug-now="debugNow" />
-            <ReasoningsChart v-if="hasData" :reasonings="data.reasonings" :weights="userWeights" @update:weights="onWeightsChange" />
-            <AppFooter :last-update-time="lastUpdateTime" />
-            <DonationToast ref="donationToast" />
+        
         </div>
     </div>
 </template>
