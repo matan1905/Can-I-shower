@@ -215,8 +215,9 @@ export default {
 <template>
     <div>
              <div class="app">
-            YES / כן
-            
+           <span> YES  כן</span>
+
+                 
             <section class="support-section">
                 <p class="support-title">{{ t.supportTitle }}</p>
                 <p class="support-subtitle">{{ t.supportSubtitle }}</p>
