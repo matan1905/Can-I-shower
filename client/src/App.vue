@@ -26,6 +26,10 @@ export default {};
                     <strong>The site is free and will reopen if and when it's needed again.</strong>
                 </p>
             </section>
+
+            <a href="https://buymeacoffee.com/iammatan" target="_blank" rel="noopener" class="support-link">
+                <img src="/haha_shampoo.png" alt="Buy me a shampoo" class="support-img" />
+            </a>
         </div>
     </div>
 </template>
@@ -87,6 +91,17 @@ export default {};
     font-size: 0.95rem;
     color: #94a3b8;
     line-height: 1.7;
+}
+.support-link {
+    display: inline-block;
+}
+.support-img {
+    max-width: 200px;
+    border-radius: 12px;
+    transition: transform 0.15s ease;
+}
+.support-img:hover {
+    transform: translateY(-2px);
 }
 .notice-body--en {
     margin-top: 1.5rem;
