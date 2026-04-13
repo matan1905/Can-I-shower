@@ -64,9 +64,19 @@ export default {
                     <linearGradient id="grad-warning" x1="0%" y1="0%" x2="100%" y2="0%">
                         <stop offset="0%" stop-color="#d97706" /><stop offset="100%" stop-color="#f59e0b" />
                     </linearGradient>
+                    <filter id="gauge-glow">
+                        <feGaussianBlur stdDeviation="3" result="blur" />
+                        <feMerge>
+                            <feMergeNode in="blur" />
+                            <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                    </filter>
                 </defs>
-                <path fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="12" stroke-linecap="round" d="M 16 100 A 84 84 0 0 1 184 100" />
-                <path fill="none" :stroke="gaugeGradient" stroke-width="12" stroke-linecap="round" d="M 16 100 A 84 84 0 0 1 184 100" :stroke-dasharray="gaugeDash" style="transition: stroke-dasharray 0.8s ease, stroke 0.5s ease;" />
+                <!-- Subtle track ticks -->
+                <path fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="16" stroke-linecap="round" d="M 16 100 A 84 84 0 0 1 184 100" />
+                <path fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="12" stroke-linecap="round" d="M 16 100 A 84 84 0 0 1 184 100" />
+                <!-- Glowing active arc -->
+                <path fill="none" :stroke="gaugeGradient" stroke-width="12" stroke-linecap="round" d="M 16 100 A 84 84 0 0 1 184 100" :stroke-dasharray="gaugeDash" filter="url(#gauge-glow)" style="transition: stroke-dasharray 0.8s ease, stroke 0.5s ease;" />
             </svg>
             <div class="gauge-text">
                 <span class="risk-percent">{{ riskDisplay }}</span>

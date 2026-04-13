@@ -8,6 +8,7 @@ export default {
         weights: { type: Object, default: () => ({}) },
         isLoading: Boolean,
         debugNow: { type: [Number, String], default: null },
+        duration: { type: Number, default: 10 },
     },
     setup() {
         return useTranslations();
@@ -20,6 +21,7 @@ export default {
         salvos: { handler: 'updateChart', deep: true },
         weights: { handler: 'updateChart', deep: true },
         debugNow: 'updateChart',
+        duration: 'updateChart',
         lang: 'updateChart',
     },
     mounted() {
@@ -63,23 +65,43 @@ export default {
             if (!pts.length) return null;
             const currentMin = this.currentMinuteOfDay;
             const xRange = this.xAxisRange;
-            let minRisk = Infinity;
-            let bestWrapped = null;
+            const dur = this.duration || 10;
+
+            // Build a lookup of wrapped minute -> risk for O(1) access
+            const riskByMinute = new Map();
             for (const p of pts) {
                 let wrapped = p.minuteOfDay;
                 if (wrapped < xRange.min) wrapped += 1440;
                 else if (wrapped > xRange.max) wrapped -= 1440;
-                if (wrapped < currentMin || wrapped < xRange.min || wrapped > xRange.max) continue;
-                if (p.risk < minRisk) {
-                    minRisk = p.risk;
-                    bestWrapped = wrapped;
+                if (wrapped >= xRange.min && wrapped <= xRange.max) {
+                    riskByMinute.set(wrapped, p.risk);
                 }
             }
-            if (bestWrapped == null) return null;
-            const display = ((bestWrapped % 1440) + 1440) % 1440;
+
+            // Sliding window: find the start minute where the average risk over `dur` minutes is lowest
+            let bestStart = null;
+            let bestAvg = Infinity;
+            const lastStart = xRange.max - dur;
+            for (let start = Math.max(currentMin, xRange.min); start <= lastStart; start++) {
+                let sum = 0;
+                let count = 0;
+                for (let m = start; m < start + dur; m++) {
+                    const r = riskByMinute.get(m);
+                    if (r != null) { sum += r; count++; }
+                }
+                if (count === 0) continue;
+                const avg = sum / count;
+                if (avg < bestAvg) {
+                    bestAvg = avg;
+                    bestStart = start;
+                }
+            }
+
+            if (bestStart == null) return null;
+            const display = ((bestStart % 1440) + 1440) % 1440;
             const h = String(Math.floor(display / 60)).padStart(2, '0');
             const m = String(display % 60).padStart(2, '0');
-            return { minuteOfDay: bestWrapped, risk: minRisk, time: `${h}:${m}` };
+            return { minuteOfDay: bestStart, risk: bestAvg, time: `${h}:${m}` };
         },
         currentMinuteOfDay() {
             let d;
@@ -163,13 +185,27 @@ export default {
 
                 if (bestTime) {
                     const bestX = wrapToWindow(bestTime.minuteOfDay);
+                    const bestX2 = Math.min(bestX + this.duration, xRange.max);
                     if (bestX >= xRange.min && bestX <= xRange.max) {
                         annotations.xaxis.push({
                             x: bestX,
+                            x2: bestX2,
+                            fillColor: '#4ade80',
+                            opacity: 0.12,
                             borderColor: '#4ade80',
                             strokeDashArray: 0,
-                            borderWidth: 2,
-                            label: { text: '', style: { background: 'transparent' } },
+                            label: {
+                                text: `🚿 ${bestTime.time}`,
+                                orientation: 'horizontal',
+                                borderWidth: 0,
+                                style: {
+                                    color: '#4ade80',
+                                    background: 'rgba(74,222,128,0.1)',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    padding: { left: 6, right: 6, top: 2, bottom: 2 },
+                                },
+                            },
                         });
                     }
                 }

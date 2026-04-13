@@ -42,6 +42,9 @@ export default {
             },
             pollTimer: null,
             pingTimer: null,
+            rocketTimers: [],
+            pageHeight: 0,
+            _resizeObs: null,
         };
     },
     computed: {
@@ -62,6 +65,32 @@ export default {
             if (r >= 0.25) return this.t.recMed;
             return this.t.recLow;
         },
+        rocketCount() {
+            const r = this.weightedRisk;
+            if (!this.hasData || r < 0.25) return 0;
+            if (r < 0.4) return 2;
+            if (r < 0.55) return 4;
+            if (r < 0.7) return 7;
+            return 12;
+        },
+        activeRockets() {
+            const count = this.rocketCount;
+            const allPositions = [8, 88, 42, 69, 22, 95, 35, 79, 15, 58, 5, 48];
+            const durations = [2.6, 3.1, 2.8, 3.3, 2.5, 3.0, 2.7, 3.4, 2.9, 3.2, 2.8, 3.0];
+            const delays = [0.0, 1.8, 0.6, 2.4, 1.1, 3.2, 0.4, 2.8, 1.5, 0.9, 3.6, 2.0];
+            const opacities = [0.16, 0.15, 0.18, 0.13, 0.17, 0.16, 0.14, 0.12, 0.14, 0.15, 0.13, 0.16];
+            return Array.from({ length: count }, (_, i) => ({
+                id: i,
+                leftPct: allPositions[i],
+                durMs: durations[i] * 1000,
+                style: {
+                    left: allPositions[i] + '%',
+                    animationDuration: durations[i] + 's',
+                    animationDelay: delays[i] + 's',
+                    opacity: opacities[i],
+                },
+            }));
+        },
         viewerText() {
             const c = this.viewersCount || 0;
             if (c <= 1) return '';
@@ -72,6 +101,9 @@ export default {
         },
     },
     mounted() {
+        this.updatePageHeight();
+        this._resizeObs = new ResizeObserver(() => this.updatePageHeight());
+        this._resizeObs.observe(document.documentElement);
         this.initDebug();
         this.ensureViewerId();
         try {
@@ -89,8 +121,27 @@ export default {
     beforeUnmount() {
         clearInterval(this.pollTimer);
         clearInterval(this.pingTimer);
+        this.rocketTimers.forEach(t => { clearTimeout(t); clearInterval(t); });
+        if (this._resizeObs) this._resizeObs.disconnect();
     },
     watch: {
+        activeRockets: {
+            handler(rockets) {
+                this.rocketTimers.forEach(t => clearInterval(t));
+                this.rocketTimers = [];
+                for (const r of rockets) {
+                    const delayMs = parseFloat(r.style.animationDelay) * 1000;
+                    const firstFire = delayMs + r.durMs;
+                    const tid = setTimeout(() => {
+                        this.spawnExplosion(r);
+                        const iid = setInterval(() => this.spawnExplosion(r), r.durMs);
+                        this.rocketTimers.push(iid);
+                    }, firstFire);
+                    this.rocketTimers.push(tid);
+                }
+            },
+            immediate: true,
+        },
         duration() { this.load(); this.loadDailyRisk(); },
         selectedLocations(v) {
             localStorage.setItem('selectedLocations', JSON.stringify(v));
@@ -204,6 +255,38 @@ export default {
                 { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
             );
         },
+        updatePageHeight() {
+            this.pageHeight = document.documentElement.scrollHeight;
+        },
+        spawnExplosion(rocket) {
+            const container = this.$refs.explosionLayer;
+            if (!container) return;
+            const x = (rocket.leftPct / 100) * window.innerWidth;
+            const y = this.pageHeight - 5;
+            const particleCount = 10 + Math.floor(Math.random() * 6);
+            for (let i = 0; i < particleCount; i++) {
+                const p = document.createElement('span');
+                p.className = 'explosion-particle';
+                const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.5;
+                const dist = 30 + Math.random() * 60;
+                const dx = Math.cos(angle) * dist;
+                const dy = Math.sin(angle) * dist;
+                const size = 3 + Math.random() * 5;
+                const hue = 25 + Math.random() * 30;
+                p.style.cssText = `
+                    left: ${x}px; top: ${y}px; width: ${size}px; height: ${size}px;
+                    --dx: ${dx}px; --dy: ${dy}px;
+                    background: hsl(${hue}, 100%, ${55 + Math.random() * 20}%);
+                `;
+                container.appendChild(p);
+                p.addEventListener('animationend', () => p.remove());
+            }
+            const glow = document.createElement('span');
+            glow.className = 'explosion-glow';
+            glow.style.cssText = `left: ${x}px; top: ${y}px;`;
+            container.appendChild(glow);
+            glow.addEventListener('animationend', () => glow.remove());
+        },
         focusLocationInput() {
             const input = this.$el.querySelector('.loc-input');
             if (input) { input.scrollIntoView({ behavior: 'smooth', block: 'center' }); input.focus(); }
@@ -214,7 +297,26 @@ export default {
 
 <template>
     <div>
-        <div class="bg-blobs"><span class="b1"></span><span class="b2"></span><span class="b3"></span></div>
+        <div class="shower-rain">
+            <span class="drop d1"></span><span class="drop d2"></span><span class="drop d3"></span>
+            <span class="drop d4"></span><span class="drop d5"></span><span class="drop d6"></span>
+            <span class="drop d7"></span><span class="drop d8"></span><span class="drop d9"></span>
+            <span class="drop d10"></span><span class="drop d11"></span><span class="drop d12"></span>
+            <span class="drop d13"></span><span class="drop d14"></span><span class="drop d15"></span>
+            <span class="drop d16"></span><span class="drop d17"></span><span class="drop d18"></span>
+            <span class="drop d19"></span><span class="drop d20"></span><span class="drop d21"></span>
+            <span class="drop d22"></span><span class="drop d23"></span><span class="drop d24"></span>
+            <span class="drop d25"></span><span class="drop d26"></span><span class="drop d27"></span>
+            <span class="drop d28"></span><span class="drop d29"></span><span class="drop d30"></span>
+            <span
+                v-for="r in activeRockets"
+                :key="r.id"
+                class="drop rocket"
+                :style="r.style"
+            ><svg viewBox="0 0 24 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 0C12 0 4 10 4 22c0 4 2 7 4 9l1-5h6l1 5c2-2 4-5 4-9C20 10 12 0 12 0z" fill="rgba(147,197,253,0.7)"/><path d="M9 26l-3 6 3-2h6l3 2-3-6H9z" fill="rgba(251,146,60,0.6)"/><circle cx="12" cy="18" r="3" fill="rgba(255,255,255,0.25)"/></svg></span>
+        </div>
+        <div class="bg-blobs"><span class="b1"></span><span class="b2"></span><span class="b3"></span><span class="b4"></span></div>
+        <div class="explosion-layer" ref="explosionLayer"></div>
         <div class="app">
             <DebugPanel v-if="isDebug" v-model="debugNow" :on-fake-toast="() => $refs.donationToast?.addFakeToast()" />
             <AppHeader :connected="isConnected" />
@@ -245,7 +347,7 @@ export default {
                 :salvo-count="data.salvoCount"
                 :trend="data.trend"
             />
-            <DailyGraph :points="dailyPoints" :salvos="dailySalvos" :weights="userWeights" :is-loading="isDailyLoading" :debug-now="debugNow" />
+            <DailyGraph :points="dailyPoints" :salvos="dailySalvos" :weights="userWeights" :is-loading="isDailyLoading" :debug-now="debugNow" :duration="duration" />
             <ReasoningsChart v-if="hasData" :reasonings="data.reasonings" :weights="userWeights" @update:weights="onWeightsChange" />
             <AppFooter :last-update-time="lastUpdateTime" />
             <DonationToast ref="donationToast" />
