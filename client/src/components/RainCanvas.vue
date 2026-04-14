@@ -91,7 +91,7 @@ export default {
             return {
                 x: Math.random() * this._w,
                 y: -20 - Math.random() * 100,
-                speed: 120 + Math.random() * 80,
+                speed: 300 + Math.random() * 200,
                 opacity: 0.25 + Math.random() * 0.15,
             };
         },
@@ -139,11 +139,11 @@ export default {
             // Rockets
             for (const r of this.rockets) {
                 r.y += r.speed * dt;
-                if (r.y > h + 10) {
-                    this.spawnExplosion(r.x, h - 2);
+                if (r.y >= h - 10) {
+                    this.spawnExplosion(r.x, h - 4);
                     r.y = -20 - Math.random() * 80;
                     r.x = Math.random() * w;
-                    r.speed = 120 + Math.random() * 80;
+                    r.speed = 300 + Math.random() * 200;
                 }
             }
             // Particles
@@ -177,15 +177,17 @@ export default {
                 ctx.stroke();
             }
 
-            // Rockets (drawn nose-down, falling)
+            // Rockets (nose-up, falling downward like incoming missiles)
             for (const r of this.rockets) {
                 ctx.save();
                 ctx.translate(r.x, r.y);
+                ctx.rotate(Math.PI); // flip 180deg so nose points up
+                ctx.translate(-6, -17); // re-center after rotation (path is 12 wide, 17 tall)
                 ctx.globalAlpha = r.opacity;
                 // Body
                 ctx.fillStyle = 'rgba(147,197,253,0.7)';
                 ctx.fill(ROCKET_SVG_PATH);
-                // Flame
+                // Flame (now visually at bottom = trailing upward)
                 ctx.beginPath();
                 ctx.moveTo(4.5, 13);
                 ctx.lineTo(3, 17);
