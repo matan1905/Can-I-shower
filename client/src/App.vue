@@ -297,7 +297,7 @@ export default {
 </script>
 
 <template>
-    <div>
+    <div style="position:relative;min-height:100vh">
         <div class="shower-rain">
             <span class="drop d1"></span><span class="drop d2"></span><span class="drop d3"></span>
             <span class="drop d4"></span><span class="drop d5"></span><span class="drop d6"></span>
