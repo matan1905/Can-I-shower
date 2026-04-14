@@ -137,10 +137,11 @@ export default {
                 }
             }
             // Rockets
+            const atPageBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 30);
             for (const r of this.rockets) {
                 r.y += r.speed * dt;
                 if (r.y >= h - 10) {
-                    this.spawnExplosion(r.x, h - 4);
+                    if (atPageBottom) this.spawnExplosion(r.x, h - 4);
                     r.y = -20 - Math.random() * 80;
                     r.x = Math.random() * w;
                     r.speed = 300 + Math.random() * 200;
