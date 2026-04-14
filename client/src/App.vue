@@ -45,6 +45,7 @@ export default {
             rocketTimers: [],
             pageHeight: 0,
             _resizeObs: null,
+            _tabHidden: false,
         };
     },
     computed: {
@@ -104,6 +105,8 @@ export default {
         this.updatePageHeight();
         this._resizeObs = new ResizeObserver(() => this.updatePageHeight());
         this._resizeObs.observe(document.documentElement);
+        this._onVisChange = () => { this._tabHidden = document.hidden; };
+        document.addEventListener('visibilitychange', this._onVisChange);
         this.initDebug();
         this.ensureViewerId();
         try {
@@ -123,6 +126,7 @@ export default {
         clearInterval(this.pingTimer);
         this.rocketTimers.forEach(t => { clearTimeout(t); clearInterval(t); });
         if (this._resizeObs) this._resizeObs.disconnect();
+        document.removeEventListener('visibilitychange', this._onVisChange);
     },
     watch: {
         activeRockets: {
@@ -259,33 +263,30 @@ export default {
             this.pageHeight = document.documentElement.scrollHeight;
         },
         spawnExplosion(rocket) {
+            if (this._tabHidden) return;
             const container = this.$refs.explosionLayer;
             if (!container) return;
+            // Cap total particles in DOM to prevent buildup
+            if (container.children.length > 60) return;
             const x = (rocket.leftPct / 100) * window.innerWidth;
             const y = this.pageHeight - 5;
-            const particleCount = 10 + Math.floor(Math.random() * 6);
-            for (let i = 0; i < particleCount; i++) {
+            const count = 6 + Math.floor(Math.random() * 4);
+            for (let i = 0; i < count; i++) {
                 const p = document.createElement('span');
                 p.className = 'explosion-particle';
-                const angle = (Math.PI * 2 * i) / particleCount + (Math.random() - 0.5) * 0.5;
-                const dist = 30 + Math.random() * 60;
-                const dx = Math.cos(angle) * dist;
-                const dy = Math.sin(angle) * dist;
-                const size = 3 + Math.random() * 5;
+                const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.4;
+                const dist = 20 + Math.random() * 40;
+                const size = 2 + Math.random() * 4;
                 const hue = 25 + Math.random() * 30;
-                p.style.cssText = `
-                    left: ${x}px; top: ${y}px; width: ${size}px; height: ${size}px;
-                    --dx: ${dx}px; --dy: ${dy}px;
-                    background: hsl(${hue}, 100%, ${55 + Math.random() * 20}%);
-                `;
+                p.style.cssText = `left:${x}px;top:${y}px;width:${size}px;height:${size}px;--dx:${Math.cos(angle) * dist}px;--dy:${Math.sin(angle) * dist}px;background:hsl(${hue},100%,${55 + Math.random() * 20}%)`;
                 container.appendChild(p);
-                p.addEventListener('animationend', () => p.remove());
+                p.addEventListener('animationend', () => p.remove(), { once: true });
             }
             const glow = document.createElement('span');
             glow.className = 'explosion-glow';
-            glow.style.cssText = `left: ${x}px; top: ${y}px;`;
+            glow.style.cssText = `left:${x}px;top:${y}px`;
             container.appendChild(glow);
-            glow.addEventListener('animationend', () => glow.remove());
+            glow.addEventListener('animationend', () => glow.remove(), { once: true });
         },
         focusLocationInput() {
             const input = this.$el.querySelector('.loc-input');
@@ -302,12 +303,6 @@ export default {
             <span class="drop d4"></span><span class="drop d5"></span><span class="drop d6"></span>
             <span class="drop d7"></span><span class="drop d8"></span><span class="drop d9"></span>
             <span class="drop d10"></span><span class="drop d11"></span><span class="drop d12"></span>
-            <span class="drop d13"></span><span class="drop d14"></span><span class="drop d15"></span>
-            <span class="drop d16"></span><span class="drop d17"></span><span class="drop d18"></span>
-            <span class="drop d19"></span><span class="drop d20"></span><span class="drop d21"></span>
-            <span class="drop d22"></span><span class="drop d23"></span><span class="drop d24"></span>
-            <span class="drop d25"></span><span class="drop d26"></span><span class="drop d27"></span>
-            <span class="drop d28"></span><span class="drop d29"></span><span class="drop d30"></span>
             <span
                 v-for="r in activeRockets"
                 :key="r.id"
